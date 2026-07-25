@@ -160,8 +160,11 @@ pub fn reactive_power(apparent_power_va: Option<f64>, power_w: Option<f64>) -> O
 #[serde(rename_all = "camelCase")]
 pub struct TrendPoint {
     pub day: DateTime<Utc>,
-    pub avg_power_va: f64,
-    pub max_power_va: f64,
-    pub avg_temperature_c: f64,
+    // Nullable since 0011 made the underlying columns nullable: a day of readings
+    // from a board with no PZEM leaves avg/max over apparent_power_va as SQL NULL,
+    // and a day with no probe does the same to the temperature average.
+    pub avg_power_va: Option<f64>,
+    pub max_power_va: Option<f64>,
+    pub avg_temperature_c: Option<f64>,
     pub samples: i64,
 }

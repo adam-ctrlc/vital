@@ -64,6 +64,7 @@ export default function AlertsScreen() {
   const [kind, setKind] = useState<AlertKind | null>(null);
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState<number | null>(null);
+  const [ackError, setAckError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   // While set, the list is held frozen so a just-acknowledged card shows its
   // acknowledged state for a beat before the refetch drops it.
@@ -116,6 +117,7 @@ export default function AlertsScreen() {
 
   async function acknowledge(id: number) {
     setBusy(id);
+    setAckError(null);
     try {
       const updated = await alertsApi.acknowledge(token ?? '', id);
       // Swap the acknowledged card in place and hold the list for a moment, so the
@@ -127,6 +129,11 @@ export default function AlertsScreen() {
         setFrozen(null);
         setNonce((n) => n + 1);
       }, 2000);
+    } catch (caught) {
+      // Without this the card silently stays ACTIVE and the rejection escapes the
+      // `void` at the call site. Losing the race to another engineer acknowledging
+      // the same alert is the ordinary way to get here, not an edge case.
+      setAckError((caught as Error).message);
     } finally {
       setBusy(null);
     }
@@ -175,6 +182,7 @@ export default function AlertsScreen() {
         </View>
 
         {error ? <Text className="text-destructive text-sm">{error.message}</Text> : null}
+        {ackError ? <Text className="text-destructive text-sm">{ackError}</Text> : null}
 
         <View className="flex-row items-center justify-between gap-2">
           {loading ? (

@@ -9,3 +9,10 @@ web-build/
 *.apk
 *.aab
 *.log
+
+# This file replaces .gitignore for the build archive rather than adding to it, so
+# without these lines the local .env is uploaded to the EAS build servers, and its
+# EXPO_PUBLIC_API_URL silently overrides the one set per profile in eas.json.
+.env
+.env.*
+!.env.example

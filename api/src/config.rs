@@ -30,6 +30,18 @@ fn parsed<T: std::str::FromStr>(key: &str, fallback: T) -> AppResult<T> {
     }
 }
 
+/// Normalises an optional secret so "set but blank" is indistinguishable from unset.
+///
+/// `env::var` returns `Ok("")` for a variable that exists with no value, which would
+/// otherwise reach `DeviceAuth` as `Some("")` and match the empty `x-device-key`
+/// header any caller can send, opening ingest to anyone. Trimming additionally saves
+/// a key piped in from a file with a trailing newline from rejecting every ingest
+/// with no diagnostic anywhere.
+fn optional_secret(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 impl Config {
     pub fn from_env() -> AppResult<Self> {
         Ok(Self {
@@ -38,7 +50,33 @@ impl Config {
             port: parsed("PORT", 8080)?,
             simulator_enabled: parsed("SIMULATOR_ENABLED", true)?,
             sample_interval_ms: parsed("SAMPLE_INTERVAL_MS", DEFAULT_SAMPLE_INTERVAL_MS)?,
-            device_api_key: std::env::var("DEVICE_API_KEY").ok(),
+            device_api_key: optional_secret(std::env::var("DEVICE_API_KEY").ok()),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::optional_secret;
+
+    #[test]
+    fn a_blank_secret_is_the_same_as_an_unset_one() {
+        // The bug this guards: `Some("")` reached the device extractor and compared
+        // equal to the empty `x-device-key` header, so anyone could post readings.
+        assert_eq!(optional_secret(Some(String::new())), None);
+        assert_eq!(optional_secret(Some("   ".to_owned())), None);
+        assert_eq!(optional_secret(None), None);
+    }
+
+    #[test]
+    fn a_real_secret_survives_with_surrounding_whitespace_removed() {
+        assert_eq!(
+            optional_secret(Some("  s3cret\n".to_owned())),
+            Some("s3cret".to_owned())
+        );
+        assert_eq!(
+            optional_secret(Some("s3cret".to_owned())),
+            Some("s3cret".to_owned())
+        );
     }
 }

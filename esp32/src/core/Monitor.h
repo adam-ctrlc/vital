@@ -134,6 +134,19 @@ class Monitor {
     }
   }
 
+  /// Prints a measurement as a JSON number, or `null` when there isn't one.
+  ///
+  /// `Serial.print(NAN, 1)` emits the bare token `nan`, which no strict JSON parser
+  /// accepts. Since NaN is the normal state whenever a sensor is missing, the line
+  /// would stop parsing exactly when the log matters most.
+  static void printNumber(float value, int digits) {
+    if (isnan(value) || isinf(value)) {
+      Serial.print("null");
+      return;
+    }
+    Serial.print(value, digits);
+  }
+
   void publish(bool sensorsOk) {
     Serial.print("{\"status\":\"");
     Serial.print(statusName());
@@ -142,21 +155,21 @@ class Monitor {
     Serial.print("\",\"sensor_ok\":");
     Serial.print(sensorsOk ? "true" : "false");
     Serial.print(",\"voltage_v\":");
-    Serial.print(voltage, 1);
+    printNumber(voltage, 1);
     Serial.print(",\"current_a\":");
-    Serial.print(current, 3);
+    printNumber(current, 3);
     Serial.print(",\"power_w\":");
-    Serial.print(power, 1);
+    printNumber(power, 1);
     Serial.print(",\"apparent_va\":");
-    Serial.print(apparentPower, 1);
+    printNumber(apparentPower, 1);
     Serial.print(",\"pf\":");
-    Serial.print(powerFactor, 2);
+    printNumber(powerFactor, 2);
     Serial.print(",\"frequency_hz\":");
-    Serial.print(frequency, 1);
+    printNumber(frequency, 1);
     Serial.print(",\"energy_kwh\":");
-    Serial.print(energy, 3);
+    printNumber(energy, 3);
     Serial.print(",\"temperature_c\":");
-    Serial.print(temperature, 1);
+    printNumber(temperature, 1);
     Serial.println("}");
   }
 

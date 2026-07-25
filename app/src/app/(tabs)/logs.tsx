@@ -1,3 +1,4 @@
+import { Redirect } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import ArrowsClockwise from 'phosphor-react-native/src/icons/ArrowsClockwise';
 import ChartLine from 'phosphor-react-native/src/icons/ChartLine';
@@ -49,6 +50,19 @@ const SOURCE_FILTERS: { label: string; value: SourceFilter }[] = [
 ];
 
 /**
+ * Caption under the chart. Days whose readings carried no power at all have a null
+ * peak, so the summary reports the range and says so rather than printing NaN.
+ */
+function summarise(points: TrendPoint[]) {
+  const peaks = points.map((p) => p.maxPowerVa).filter((peak) => peak !== null);
+  const span = `${points.length} day(s)`;
+
+  return peaks.length === 0
+    ? `${span}, no load recorded`
+    : `${span}, peak ${Math.max(...peaks).toFixed(0)} VA`;
+}
+
+/**
  * Bars rather than a line: the series is usually a handful of days, and a single
  * day has no segment to draw at all.
  */
@@ -72,8 +86,10 @@ function TrendChart({
   const bars = useMemo(() => {
     if (width <= 0 || points.length === 0) return [];
 
-    // Headroom above the peak so the tallest bar does not touch the value label.
-    const ceiling = Math.max(...points.map((p) => p.maxPowerVa), 1) * 1.2;
+    // Headroom above the peak so the tallest bar does not touch the value label. A day
+    // with no power readings contributes nothing to the ceiling rather than dragging
+    // it to zero.
+    const ceiling = Math.max(...points.map((p) => p.maxPowerVa ?? 0), 1) * 1.2;
     const count = points.length;
     const barWidth = Math.min(MAX_BAR_WIDTH, (width - BAR_GAP * (count - 1)) / count);
     const spread = barWidth * count + BAR_GAP * (count - 1);
@@ -81,15 +97,19 @@ function TrendChart({
     const plot = CHART_HEIGHT - AXIS_HEIGHT - LABEL_HEIGHT;
 
     return points.map((point, index) => {
-      const height = Math.max((point.avgPowerVa / ceiling) * plot, 2);
+      const { avgPowerVa, maxPowerVa } = point;
+      const height = avgPowerVa === null ? 0 : Math.max((avgPowerVa / ceiling) * plot, 2);
 
       return {
         point,
+        avgPowerVa,
+        maxPowerVa,
         x: startX + index * (barWidth + BAR_GAP),
         y: CHART_HEIGHT - AXIS_HEIGHT - height,
         width: barWidth,
         height,
-        peakY: CHART_HEIGHT - AXIS_HEIGHT - (point.maxPowerVa / ceiling) * plot,
+        peakY:
+          maxPowerVa === null ? null : CHART_HEIGHT - AXIS_HEIGHT - (maxPowerVa / ceiling) * plot,
       };
     });
   }, [points, width]);
@@ -104,11 +124,14 @@ function TrendChart({
       {width > 0 ? (
         <Svg width={width} height={CHART_HEIGHT}>
           {bars.map((bar) => {
-            const over = threshold !== null && bar.point.maxPowerVa >= threshold;
+            const over =
+              threshold !== null && bar.maxPowerVa !== null && bar.maxPowerVa >= threshold;
             const fill = over ? overColor : color;
 
             return (
               <G key={bar.point.day}>
+                {/* A day whose readings carried no power at all draws no bar and no
+                    peak, so an unmeasured day is not mistaken for an idle one. */}
                 <SvgText
                   x={bar.x + bar.width / 2}
                   y={bar.y - 5}
@@ -116,19 +139,30 @@ function TrendChart({
                   fontSize={9}
                   fontWeight="600"
                   textAnchor="middle">
-                  {bar.point.avgPowerVa.toFixed(0)}
+                  {bar.avgPowerVa === null ? 'No data' : bar.avgPowerVa.toFixed(0)}
                 </SvgText>
-                <Rect x={bar.x} y={bar.y} width={bar.width} height={bar.height} rx={4} fill={fill} />
+                {bar.height > 0 ? (
+                  <Rect
+                    x={bar.x}
+                    y={bar.y}
+                    width={bar.width}
+                    height={bar.height}
+                    rx={4}
+                    fill={fill}
+                  />
+                ) : null}
                 {/* Peak sits above the average bar, so a spiky day is not hidden by its mean. */}
-                <Line
-                  x1={bar.x}
-                  y1={bar.peakY}
-                  x2={bar.x + bar.width}
-                  y2={bar.peakY}
-                  stroke={fill}
-                  strokeWidth={1.5}
-                  strokeDasharray="3 2"
-                />
+                {bar.peakY === null ? null : (
+                  <Line
+                    x1={bar.x}
+                    y1={bar.peakY}
+                    x2={bar.x + bar.width}
+                    y2={bar.peakY}
+                    stroke={fill}
+                    strokeWidth={1.5}
+                    strokeDasharray="3 2"
+                  />
+                )}
                 <SvgText
                   x={bar.x + bar.width / 2}
                   y={CHART_HEIGHT - 4}
@@ -148,7 +182,7 @@ function TrendChart({
 }
 
 export default function LogsScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { markLogsSeen } = useNotifications();
   const { primary } = useAppearance();
   const { colorScheme } = useColorScheme();
@@ -230,6 +264,12 @@ export default function LogsScreen() {
 
   const filtering = debouncedQuery.trim().length > 0 || onlyOverload || source !== null;
 
+  // Hiding the tab in the layout only removes the button; the route stays registered,
+  // so `dynavolt://logs` still lands here. The API enforces this too; the redirect
+  // just avoids a wall of 403s.
+  if (!token) return <Redirect href="/login" />;
+  if (user && user.role !== 'admin') return <Redirect href="/dashboard" />;
+
   return (
     <SafeAreaView className="bg-background flex-1" edges={['top']}>
       <KeyboardAvoidingView className="flex-1" behavior="padding">
@@ -256,9 +296,7 @@ export default function LogsScreen() {
               labelColor={muted}
             />
             <Text variant="muted" className="text-xs">
-              {points.length === 0
-                ? 'No samples yet'
-                : `${points.length} day(s), peak ${Math.max(...points.map((p) => p.maxPowerVa)).toFixed(0)} VA`}
+              {points.length === 0 ? 'No samples yet' : summarise(points)}
             </Text>
           </CardContent>
         </Card>

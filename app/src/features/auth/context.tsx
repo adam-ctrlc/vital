@@ -11,6 +11,7 @@ import {
 
 import * as api from '@/features/auth/api';
 import type { Role, User } from '@/features/auth/types';
+import { ApiError, setUnauthorizedHandler } from '@/lib/api-client';
 
 const TOKEN_KEY = 'dynavolt.token';
 
@@ -52,8 +53,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setToken(stored);
           setUser(found);
         }
-      } catch {
-        await SecureStore.deleteItemAsync(TOKEN_KEY);
+      } catch (caught) {
+        // Only a rejected token is a reason to throw the session away. Airplane mode,
+        // a DNS failure and a Vercel 502 all land here too, and discarding a token
+        // that is still valid for hours over a dead signal forces a needless re-login
+        // in exactly the place the app is used.
+        if (caught instanceof ApiError && caught.status === 401) {
+          await SecureStore.deleteItemAsync(TOKEN_KEY);
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -74,10 +81,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
+    // State first: if the keychain throws (locked, or invalidated by a PIN change on
+    // Android) the caller still ends up signed out rather than stuck on a screen that
+    // says nothing happened.
     setToken(null);
     setUser(null);
+    await SecureStore.deleteItemAsync(TOKEN_KEY);
   }, []);
+
+  // Ends the session as soon as the server rejects the token, instead of letting the
+  // pollers retry a dead token until someone signs out by hand.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      void signOut();
+    });
+
+    return () => setUnauthorizedHandler(null);
+  }, [signOut]);
 
   const value = useMemo<AuthValue>(
     () => ({ token, user, loading, signIn, signOut, setUser }),

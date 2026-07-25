@@ -15,6 +15,21 @@
 
 #define POST_INTERVAL_MS 10000
 #define HEARTBEAT_INTERVAL_MS 30000
+// Reconnection runs on its own cadence rather than riding the heartbeat. Tied to the
+// heartbeat, a drop one second after one went out was left unattended for the next 29,
+// which is the whole of the API's 30 second freshness window: the dashboard went dark
+// at almost exactly the moment the board first tried to recover.
+#define RECONNECT_INTERVAL_MS 15000
+
+// Bounds on what a heartbeat may set the alarm thresholds to. The backend is reached
+// over TLS with certificate validation disabled, so a party controlling DNS or the
+// access point can answer in its place; without a ceiling it could set the load limit
+// to 99999, and applyThresholds would write that to NVS where it survives a reboot.
+// Sized for a 1 KVA unit with room to spare rather than to model the transformer.
+#define MIN_LOAD_THRESHOLD_VA 1.0f
+#define MAX_LOAD_THRESHOLD_VA 2000.0f
+#define MIN_TEMP_THRESHOLD_C 1.0f
+#define MAX_TEMP_THRESHOLD_C 150.0f
 
 class Main {
  public:
@@ -37,6 +52,7 @@ class Main {
     monitor.setThresholds(prefs.getFloat("loadVa", 900.0f),
                           prefs.getFloat("tempC", 40.0f));
 
+    net.begin();
     net.connect();
   }
 
@@ -45,9 +61,16 @@ class Main {
 
     monitor.loop(now);
 
+    if (WiFi.status() != WL_CONNECTED && now - lastReconnect >= RECONNECT_INTERVAL_MS) {
+      lastReconnect = now;
+      net.connect();
+    }
+
+    bool online = WiFi.status() == WL_CONNECTED;
+
     if (now - lastPost >= POST_INTERVAL_MS) {
       lastPost = now;
-      if (WiFi.status() == WL_CONNECTED) {
+      if (online) {
         Monitor::Snapshot s = monitor.snapshot();
         backend.postReading(s.voltage, s.current, s.temperature, s.power,
                             s.powerFactor, s.frequency, s.energy);
@@ -56,8 +79,7 @@ class Main {
 
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
       lastHeartbeat = now;
-      net.connect();
-      applyThresholds(backend.postHeartbeat());
+      if (online) applyThresholds(backend.postHeartbeat());
     }
   }
 
@@ -70,7 +92,17 @@ class Main {
 
     float va = ack.loadThresholdVa;
     float temp = ack.tempThresholdC;
-    if (isnan(va) || isnan(temp) || va <= 0.0f || temp <= 0.0f) return;
+    if (isnan(va) || isnan(temp)) return;
+    if (va < MIN_LOAD_THRESHOLD_VA || va > MAX_LOAD_THRESHOLD_VA) {
+      Serial.print("rejected out of range load threshold: ");
+      Serial.println(va, 0);
+      return;
+    }
+    if (temp < MIN_TEMP_THRESHOLD_C || temp > MAX_TEMP_THRESHOLD_C) {
+      Serial.print("rejected out of range temp threshold: ");
+      Serial.println(temp, 0);
+      return;
+    }
 
     if (fabs(va - monitor.loadThreshold()) < 0.05f &&
         fabs(temp - monitor.tempThreshold()) < 0.05f) {
@@ -97,4 +129,5 @@ class Main {
   Preferences prefs;
   unsigned long lastPost = 0;
   unsigned long lastHeartbeat = 0;
+  unsigned long lastReconnect = 0;
 };

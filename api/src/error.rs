@@ -27,6 +27,8 @@ pub enum AppError {
     NotFound,
     #[error("{0}")]
     BadRequest(String),
+    #[error("too many attempts, try again in {0}s")]
+    TooManyRequests(u64),
     #[error("could not hash password")]
     PasswordHash,
     #[error("could not create token")]
@@ -79,6 +81,7 @@ impl IntoResponse for AppError {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
         };
 
         if status == StatusCode::INTERNAL_SERVER_ERROR {

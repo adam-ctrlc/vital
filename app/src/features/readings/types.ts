@@ -43,10 +43,12 @@ export type Reading = MeterFields & {
   recordedAt: string;
 };
 
+/** Null on a day whose readings all lacked that measurement, e.g. a board with a
+ *  temperature probe but no PZEM leaves both power averages null. */
 export type TrendPoint = {
   day: string;
-  avgPowerVa: number;
-  maxPowerVa: number;
-  avgTemperatureC: number;
+  avgPowerVa: number | null;
+  maxPowerVa: number | null;
+  avgTemperatureC: number | null;
   samples: number;
 };

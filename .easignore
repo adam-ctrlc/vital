@@ -1,0 +1,36 @@
+# EAS builds the app from app/, but it archives the whole git repository, so this file
+# governs the upload rather than app/.easignore. Without it the Rust build directory
+# (api/target, which reaches several GB after a few cargo runs) is swept in and the
+# archive exceeds the 2 GB limit EAS enforces.
+#
+# Note this REPLACES .gitignore for the archive rather than adding to it, so anything
+# that must stay out has to be listed here even if git already ignores it.
+
+# Not part of the mobile app
+api/
+esp32/
+
+# Build output and dependencies
+**/node_modules/
+**/target/
+**/.expo/
+**/dist/
+**/web-build/
+**/.git/
+**/.kotlin/
+
+# Generated native projects
+app/ios/
+app/android/
+
+# Artifacts
+**/*.apk
+**/*.aab
+**/*.log
+**/*.tsbuildinfo
+
+# Secrets: keep real credentials out of the build servers
+**/.env
+**/.env.*
+!**/.env.example
+esp32/secrets.h

@@ -1,8 +1,14 @@
+use std::time::Duration;
+
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tower_governor::governor::GovernorConfigBuilder;
+use tower_governor::key_extractor::SmartIpKeyExtractor;
+use tower_governor::{GovernorError, GovernorLayer};
 use uuid::Uuid;
 
 use crate::auth::extract::AuthUser;
@@ -107,11 +113,50 @@ pub struct ChangePassword {
     pub new_password: String,
 }
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/login", post(login))
+/// Ten attempts up front, then one every ten seconds. Generous enough for a mistyped
+/// password on a phone keyboard, tight enough that sustained guessing runs at six
+/// tries a minute instead of as fast as the network allows.
+const LOGIN_BURST: u32 = 10;
+const LOGIN_REPLENISH_SECONDS: u64 = 10;
+
+/// Throttles `/auth/login` by caller IP.
+///
+/// Scoped to this one route on purpose: the ESP32 posts a reading every ten seconds
+/// and the dashboard polls once a second, so a router-wide limiter would throttle the
+/// product rather than the attacker.
+///
+/// The honest limitation: each Vercel instance holds its own bucket, so this caps a
+/// single source per instance rather than globally, and does nothing against an
+/// attack spread across many addresses. It raises the cost of the easy case. The
+/// airtight version is a `failed_attempts` column keyed on the account, which needs a
+/// migration. The `warn` logging in `login` below is what makes either case visible.
+pub fn router() -> AppResult<Router<AppState>> {
+    let config = GovernorConfigBuilder::default()
+        .key_extractor(SmartIpKeyExtractor)
+        .period(Duration::from_secs(LOGIN_REPLENISH_SECONDS))
+        .burst_size(LOGIN_BURST)
+        .finish()
+        .ok_or_else(|| AppError::InvalidEnv("login rate limit".to_owned()))?;
+
+    let throttle = GovernorLayer::new(config).error_handler(|error| match error {
+        // Floored at a second: governor reports the wait in whole seconds, so a caller
+        // part way through the current one is told to retry in "0s", which reads as an
+        // invitation to hammer the endpoint again immediately.
+        GovernorError::TooManyRequests { wait_time, .. } => {
+            AppError::TooManyRequests(wait_time.max(1)).into_response()
+        }
+        // Only reachable if neither a proxy header nor the peer address is available,
+        // which means the server is wired up wrong rather than the caller misbehaving.
+        other => {
+            tracing::error!(?other, "login rate limiter could not identify the caller");
+            AppError::Token.into_response()
+        }
+    });
+
+    Ok(Router::new()
+        .route("/login", post(login).layer(throttle))
         .route("/me", get(me).put(update_me))
-        .route("/password", put(change_password))
+        .route("/password", put(change_password)))
 }
 
 async fn login(
@@ -120,8 +165,10 @@ async fn login(
 ) -> AppResult<Json<LoginResponse>> {
     // Email is stored lowercased and usernames are always lowercase, so one
     // lowercased needle matches either column.
+    let identifier = body.identifier.trim().to_lowercase();
+
     let found = sqlx::query_as::<_, Credentials>(credentials_select!("email = $1 or username = $1"))
-        .bind(body.identifier.trim().to_lowercase())
+        .bind(&identifier)
         .fetch_optional(&state.pool)
         .await?;
 
@@ -129,10 +176,15 @@ async fn login(
     // hash so timing does not reveal which accounts exist.
     let Some(found) = found else {
         password::verify_dummy(&body.password);
+        // Logged because a 401 is otherwise invisible: `AppError`'s response path only
+        // traces 500s, so without this a guessing run leaves no trace at all in the
+        // Vercel logs and cannot be detected, let alone responded to.
+        tracing::warn!(%identifier, reason = "no such account", "login failed");
         return Err(AppError::InvalidCredentials);
     };
 
     if !password::verify(&body.password, &found.password_hash) {
+        tracing::warn!(%identifier, reason = "wrong password", "login failed");
         return Err(AppError::InvalidCredentials);
     }
 
@@ -143,6 +195,7 @@ async fn login(
     if let Some(chosen) = body.role
         && chosen != role
     {
+        tracing::warn!(%identifier, reason = "wrong portal", "login failed");
         return Err(AppError::PortalMismatch(role));
     }
 

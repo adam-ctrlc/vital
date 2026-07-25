@@ -59,7 +59,7 @@ pub async fn build(config: &Config) -> AppResult<Router> {
 
     let pool = db::connect(&config.database_url).await?;
 
-    Ok(router(pool, config))
+    router(pool, config)
 }
 
 /// Local development entrypoint. Applies migrations, then serves. Accounts are
@@ -70,10 +70,10 @@ pub async fn build_for_dev(config: &Config) -> AppResult<Router> {
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
 
-    Ok(router(pool, config))
+    router(pool, config)
 }
 
-fn router(pool: PgPool, config: &Config) -> Router {
+fn router(pool: PgPool, config: &Config) -> AppResult<Router> {
     let state = AppState {
         pool,
         jwt_secret: Arc::from(config.jwt_secret.as_str()),
@@ -84,7 +84,7 @@ fn router(pool: PgPool, config: &Config) -> Router {
 
     let v1 = Router::new()
         .route("/health", get(health))
-        .nest("/auth", auth::routes::router())
+        .nest("/auth", auth::routes::router()?)
         .nest("/readings", readings::routes::router())
         .nest("/alerts", alerts::routes::router())
         .nest("/settings", settings::routes::router())
@@ -98,10 +98,10 @@ fn router(pool: PgPool, config: &Config) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    Ok(Router::new()
         .nest("/api/v1", v1)
         .layer(cors)
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http()))
 }
 
 async fn health() -> Json<Health> {

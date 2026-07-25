@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import Check from 'phosphor-react-native/src/icons/Check';
 import Gear from 'phosphor-react-native/src/icons/Gear';
@@ -48,7 +48,7 @@ const DEVICE_POLL_MS = 5000;
 const AVAILABLE_GREEN = '#22c55e';
 
 export default function SettingsScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { primary } = useAppearance();
   const { colorScheme } = useColorScheme();
   const muted = colorScheme === 'dark' ? '#a1a1aa' : '#71717a';
@@ -180,6 +180,12 @@ export default function SettingsScreen() {
   }
 
   const dirty = draft.load !== saved.load || draft.temp !== saved.temp;
+
+  // Hiding the tab in the layout only removes the button; the route stays registered,
+  // so `dynavolt://settings` still lands here. The API enforces this too; the redirect
+  // just avoids a wall of 403s.
+  if (!token) return <Redirect href="/login" />;
+  if (user && user.role !== 'admin') return <Redirect href="/dashboard" />;
 
   return (
     <SafeAreaView className="bg-background flex-1" edges={['top']}>

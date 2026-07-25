@@ -2,7 +2,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
-use crate::auth::extract::{AuthUser, DeviceAuth};
+use crate::auth::extract::{AdminUser, DeviceAuth};
 use crate::device::model::{DeviceStatus, Heartbeat, HeartbeatAck};
 use crate::device::service;
 use crate::error::AppResult;
@@ -14,7 +14,11 @@ pub fn router() -> Router<AppState> {
         .route("/heartbeat", post(heartbeat))
 }
 
-async fn status(State(state): State<AppState>, _auth: AuthUser) -> AppResult<Json<DeviceStatus>> {
+/// Admin only: the payload carries the board's SSID, LAN address, firmware and uptime,
+/// which is network reconnaissance rather than monitoring data. Only the Settings
+/// screen renders it, and that screen is already admin-gated. The dashboard learns
+/// whether the board is live from `/readings/latest` instead.
+async fn status(State(state): State<AppState>, _admin: AdminUser) -> AppResult<Json<DeviceStatus>> {
     Ok(Json(service::status(&state.pool).await?))
 }
 

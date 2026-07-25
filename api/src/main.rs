@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use dynavolt_api::config::Config;
 use dynavolt_api::error::AppResult;
 use tracing_subscriber::EnvFilter;
@@ -18,7 +20,14 @@ async fn main() -> AppResult<()> {
 
     tracing::info!(%address, "dynavolt api listening");
 
-    axum::serve(listener, app).await?;
+    // Connect info so the login rate limiter can key on the caller. Vercel supplies
+    // `x-forwarded-for` in production; locally there is no proxy header, so without
+    // this the limiter has nothing to identify the caller by.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

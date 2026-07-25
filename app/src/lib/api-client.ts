@@ -17,6 +17,17 @@ type RequestOptions = {
   signal?: AbortSignal;
 };
 
+let onUnauthorized: (() => void) | null = null;
+
+/**
+ * Registers what to do when the server rejects a token we sent. Kept as a callback
+ * rather than importing the auth context here, which would be a cycle: the context
+ * already imports this module.
+ */
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler;
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, token, signal } = options;
 
@@ -47,6 +58,13 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 
   if (!response.ok) {
+    // A 401 on a request that carried a token means the token is dead, so end the
+    // session rather than leaving every poll to fail forever behind a "cannot reach
+    // the API" card. Sign-in carries no token, so a wrong password does not land here.
+    if (response.status === 401 && token) {
+      onUnauthorized?.();
+    }
+
     const message =
       payload && typeof payload === 'object' && 'error' in payload
         ? String((payload as { error: unknown }).error)
