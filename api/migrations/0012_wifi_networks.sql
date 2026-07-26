@@ -15,8 +15,22 @@ create table if not exists wifi_networks (
 create unique index if not exists wifi_networks_one_default on wifi_networks (is_default) where is_default;
 create unique index if not exists wifi_networks_one_selected on wifi_networks (selected) where selected;
 
-insert into wifi_networks (ssid, password, selected, updated_at)
-select wifi_ssid, wifi_password, true, updated_at from device_config where id = 1
-on conflict (ssid) do nothing;
+-- Guarded because this migration reached the shared database out of band: the DDL
+-- took effect but the _sqlx_migrations row was never written, so sqlx re-runs it
+-- against a schema where device_config has already been dropped. Every other
+-- statement here was written to tolerate that; this read was not, and it failed with
+-- 42P01, which stopped the dev server before it could serve or apply 0013 and 0014.
+-- A fresh database is unaffected: 0003 creates device_config, so the seed still runs.
+do $$
+begin
+    if exists (
+        select 1 from information_schema.tables
+        where table_schema = 'public' and table_name = 'device_config'
+    ) then
+        insert into wifi_networks (ssid, password, selected, updated_at)
+        select wifi_ssid, wifi_password, true, updated_at from device_config where id = 1
+        on conflict (ssid) do nothing;
+    end if;
+end $$;
 
 drop table if exists device_config;

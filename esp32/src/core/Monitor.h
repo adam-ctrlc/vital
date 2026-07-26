@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 
 #include "../hardware/EnergyMeter.h"
 #include "../hardware/TemperatureProbe.h"
@@ -134,43 +135,35 @@ class Monitor {
     }
   }
 
-  /// Prints a measurement as a JSON number, or `null` when there isn't one.
+  /// Writes a measurement as a JSON number, or `null` when there isn't one.
   ///
-  /// `Serial.print(NAN, 1)` emits the bare token `nan`, which no strict JSON parser
-  /// accepts. Since NaN is the normal state whenever a sensor is missing, the line
-  /// would stop parsing exactly when the log matters most.
-  static void printNumber(float value, int digits) {
+  /// `String(NAN, 1)` renders the bare token `nan`, which no strict JSON parser
+  /// accepts. NaN is the normal state whenever a sensor is missing, so left alone the
+  /// line would stop parsing exactly when the log matters most.
+  static void put(JsonDocument &doc, const char *key, float value, int digits) {
     if (isnan(value) || isinf(value)) {
-      Serial.print("null");
+      doc[key] = nullptr;
       return;
     }
-    Serial.print(value, digits);
+    doc[key] = serialized(String(value, digits));
   }
 
   void publish(bool sensorsOk) {
-    Serial.print("{\"status\":\"");
-    Serial.print(statusName());
-    Serial.print("\",\"relay\":\"");
-    Serial.print(relay.isClosed() ? "CLOSED" : "OPEN");
-    Serial.print("\",\"sensor_ok\":");
-    Serial.print(sensorsOk ? "true" : "false");
-    Serial.print(",\"voltage_v\":");
-    printNumber(voltage, 1);
-    Serial.print(",\"current_a\":");
-    printNumber(current, 3);
-    Serial.print(",\"power_w\":");
-    printNumber(power, 1);
-    Serial.print(",\"apparent_va\":");
-    printNumber(apparentPower, 1);
-    Serial.print(",\"pf\":");
-    printNumber(powerFactor, 2);
-    Serial.print(",\"frequency_hz\":");
-    printNumber(frequency, 1);
-    Serial.print(",\"energy_kwh\":");
-    printNumber(energy, 3);
-    Serial.print(",\"temperature_c\":");
-    printNumber(temperature, 1);
-    Serial.println("}");
+    JsonDocument doc;
+    doc["status"] = statusName();
+    doc["relay"] = relay.isClosed() ? "CLOSED" : "OPEN";
+    doc["sensor_ok"] = sensorsOk;
+    put(doc, "voltage_v", voltage, 1);
+    put(doc, "current_a", current, 3);
+    put(doc, "power_w", power, 1);
+    put(doc, "apparent_va", apparentPower, 1);
+    put(doc, "pf", powerFactor, 2);
+    put(doc, "frequency_hz", frequency, 1);
+    put(doc, "energy_kwh", energy, 3);
+    put(doc, "temperature_c", temperature, 1);
+
+    serializeJson(doc, Serial);
+    Serial.println();
   }
 
   void showLcd() {

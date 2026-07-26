@@ -114,4 +114,16 @@ Libraries to install (Library Manager):
   OneWire                    DS18B20 bus.
   DallasTemperature          DS18B20 temperature conversion.
   PZEM004Tv30                PZEM-004T v3 energy meter.
+  ArduinoJson by B. Blanchon Version 7 or newer. Builds and reads every JSON payload:
+                             the two backend bodies, the heartbeat reply, and the
+                             serial diagnostic line. Version 7 matters, because 6 and
+                             earlier need a document size at construction and the bare
+                             `JsonDocument doc;` used here will not compile against it.
 Bundled with the ESP32 core (no install): WiFi, Wire, WiFiClientSecure, HTTPClient, HardwareSerial.
+
+Why ArduinoJson rather than string concatenation: the SSID and IP go into the heartbeat
+verbatim, and a quote or backslash in an SSID used to produce malformed JSON the API
+answered with a 400 that read like a broken board. The reply parser it replaced was a
+substring scan that also mismatched a key appearing inside a string value and read a
+serialized exponent such as 1e3 as 1, which would have set a threshold a thousand times
+too low. Both directions now escape and parse properly, and NaN serializes as null.
