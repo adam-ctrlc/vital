@@ -62,7 +62,7 @@ async fn raise(
         return Ok(());
     }
 
-    let alert = sqlx::query_as::<_, Alert>(
+    let inserted = sqlx::query_as::<_, Alert>(
         "insert into alerts (reading_id, kind, message, value, threshold)
          values ($1, $2, $3, $4, $5)
          returning id, reading_id, kind, message, value, threshold, created_at,
@@ -74,7 +74,17 @@ async fn raise(
     .bind(value)
     .bind(threshold)
     .fetch_one(pool)
-    .await?;
+    .await;
+
+    let alert = match inserted {
+        Ok(alert) => alert,
+        // Lost the race: another request opened the same condition between the check
+        // above and this insert. The partial unique index added in 0015 is what turns
+        // that into a conflict rather than a second alert and a second push to every
+        // device. Nothing to report, the condition is already raised.
+        Err(error) if crate::error::is_unique_violation(&error) => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
 
     tracing::info!(kind, value, threshold, "alert raised");
 

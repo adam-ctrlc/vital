@@ -8,7 +8,6 @@ use crate::readings::model::{LiveReading, Reading, ReadingInput, Status};
 use crate::readings::simulate;
 use crate::readings::units;
 use crate::settings::model::Settings;
-use crate::settings::service as settings_service;
 
 #[must_use]
 pub fn evaluate(input: &ReadingInput, settings: &Settings) -> (Option<f64>, Status) {
@@ -25,10 +24,36 @@ pub fn evaluate(input: &ReadingInput, settings: &Settings) -> (Option<f64>, Stat
 }
 
 /// Stores a measurement and opens any alerts it triggers.
-pub async fn record(pool: &PgPool, input: ReadingInput, source: &str) -> AppResult<Reading> {
-    let settings = settings_service::load(pool).await?;
-    let (apparent_power_va, status) = evaluate(&input, &settings);
+///
+/// Settings are taken rather than loaded, because every caller has already read them to
+/// decide what to do, and reloading meant the same single row was fetched twice in one
+/// request.
+pub async fn record(
+    pool: &PgPool,
+    input: ReadingInput,
+    source: &str,
+    settings: &Settings,
+) -> AppResult<Reading> {
+    let (apparent_power_va, status) = evaluate(&input, settings);
+    let reading = insert(pool, &input, apparent_power_va, status, source).await?;
 
+    alerts::service::evaluate(pool, &reading, settings).await?;
+
+    Ok(reading)
+}
+
+/// Generic over the executor so the same statement serves a pooled call and a call
+/// inside the sampling transaction below.
+async fn insert<'e, E>(
+    executor: E,
+    input: &ReadingInput,
+    apparent_power_va: Option<f64>,
+    status: Status,
+    source: &str,
+) -> AppResult<Reading>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     let reading = sqlx::query_as::<_, Reading>(
         "insert into readings
             (voltage_v, current_a, temperature_c, apparent_power_va, status, source,
@@ -47,10 +72,8 @@ pub async fn record(pool: &PgPool, input: ReadingInput, source: &str) -> AppResu
     .bind(input.power_factor)
     .bind(input.frequency_hz)
     .bind(input.energy_kwh)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
-
-    alerts::service::evaluate(pool, &reading, &settings).await?;
 
     Ok(reading)
 }
@@ -84,7 +107,8 @@ fn input_from(reading: &Reading) -> ReadingInput {
 /// mode nothing is simulated or recorded: the latest pushed reading is served, and
 /// the link counts as connected only while that reading stays inside the window.
 pub async fn live(pool: &PgPool, sample_interval_ms: i64) -> AppResult<LiveReading> {
-    let settings = settings_service::load(pool).await?;
+    let state = load_live_state(pool).await?;
+    let settings = state.settings();
     let now = Utc::now();
 
     let (input, recorded_at, simulated, connected) = match settings.source_mode.as_str() {
@@ -98,9 +122,19 @@ pub async fn live(pool: &PgPool, sample_interval_ms: i64) -> AppResult<LiveReadi
         },
         _ => {
             let input = simulate::at(now.timestamp_millis());
-            if is_sample_due(pool, sample_interval_ms).await? {
-                record(pool, input, "simulator").await?;
+
+            // Cheap unlocked check first. Fourteen polls out of fifteen are not due, and
+            // those should not pay for a transaction and a lock to find that out.
+            if state.is_sample_due(sample_interval_ms, now) {
+                if let Some(reading) =
+                    record_sample(pool, &input, sample_interval_ms, &settings).await?
+                {
+                    // Only the request that actually wrote the row evaluates alerts, so
+                    // one condition still raises one alert and one push.
+                    alerts::service::evaluate(pool, &reading, &settings).await?;
+                }
             }
+
             (input, now, true, false)
         }
     };
@@ -156,16 +190,112 @@ pub async fn latest_hardware(pool: &PgPool) -> AppResult<Option<Reading>> {
     Ok(reading)
 }
 
-async fn is_sample_due(pool: &PgPool, sample_interval_ms: i64) -> AppResult<bool> {
+/// Namespaces the sampling lock. Arbitrary but fixed: advisory locks are keyed by this
+/// number alone, so it only has to be unlikely to collide with anything else sharing
+/// the database.
+const SAMPLE_LOCK_KEY: i64 = 0x0056_4954_414C_01;
+
+/// Everything the live endpoint needs before it can decide anything, in one round trip.
+///
+/// This is the hottest query in the system, run once a second by every open dashboard.
+/// Reading the settings row and the newest simulator timestamp as separate statements
+/// doubled that for no reason: one is a single row by primary key, the other a single
+/// indexed lookup, and neither depends on the other.
+#[derive(sqlx::FromRow)]
+struct LiveState {
+    load_threshold_va: f64,
+    temp_threshold_c: f64,
+    source_mode: String,
+    updated_at: DateTime<Utc>,
+    latest_simulator_ms: Option<i64>,
+}
+
+impl LiveState {
+    fn settings(&self) -> Settings {
+        Settings {
+            load_threshold_va: self.load_threshold_va,
+            temp_threshold_c: self.temp_threshold_c,
+            source_mode: self.source_mode.clone(),
+            updated_at: self.updated_at,
+        }
+    }
+
+    fn is_sample_due(&self, sample_interval_ms: i64, now: DateTime<Utc>) -> bool {
+        self.latest_simulator_ms
+            .is_none_or(|ms| now.timestamp_millis() - ms >= sample_interval_ms)
+    }
+}
+
+async fn load_live_state(pool: &PgPool) -> AppResult<LiveState> {
+    let state = sqlx::query_as::<_, LiveState>(
+        "select s.load_threshold_va, s.temp_threshold_c, s.source_mode, s.updated_at,
+                (select (extract(epoch from recorded_at) * 1000)::bigint
+                 from readings where source = 'simulator'
+                 order by recorded_at desc limit 1) as latest_simulator_ms
+         from settings s
+         where s.id = 1",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(state)
+}
+
+/// Records a simulator sample, at most once per interval however many dashboards ask at
+/// the same moment.
+///
+/// Checking and then inserting is not enough on its own: concurrent requests all read
+/// "due" before any of them commits, so they all insert. That produced a row per viewer
+/// instead of one per interval, skewed every average in the trend endpoint, and had each
+/// duplicate evaluate alerts and push. Instances are separate processes on Vercel, so an
+/// in-process guard could not help either.
+///
+/// A transaction scoped advisory lock elects one writer. Everyone else skips and serves
+/// the same value, which is derived from the clock and therefore identical anyway. The
+/// lock is released when the transaction ends, including on error, so a panicking
+/// request cannot wedge sampling.
+///
+/// Returns the row only to the request that wrote it, so its caller alone raises alerts.
+async fn record_sample(
+    pool: &PgPool,
+    input: &ReadingInput,
+    sample_interval_ms: i64,
+    settings: &Settings,
+) -> AppResult<Option<Reading>> {
+    let mut tx = pool.begin().await?;
+
+    let acquired: bool = sqlx::query_scalar("select pg_try_advisory_xact_lock($1)")
+        .bind(SAMPLE_LOCK_KEY)
+        .fetch_one(&mut *tx)
+        .await?;
+
+    if !acquired {
+        return Ok(None);
+    }
+
+    // Re-read under the lock. The request that held it a moment ago may have written
+    // the very sample this one was about to duplicate.
+    //
+    // Scoped to the simulator feed, which the old check was not: a single hardware row
+    // suppressed simulator sampling for a whole interval, and the two feeds interfered.
     let latest_ms: Option<i64> = sqlx::query_scalar(
         "select (extract(epoch from recorded_at) * 1000)::bigint
-         from readings order by recorded_at desc limit 1",
+         from readings where source = 'simulator'
+         order by recorded_at desc limit 1",
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .flatten();
 
     let due = latest_ms.is_none_or(|ms| Utc::now().timestamp_millis() - ms >= sample_interval_ms);
+    if !due {
+        return Ok(None);
+    }
 
-    Ok(due)
+    let (apparent_power_va, status) = evaluate(input, settings);
+    let reading = insert(&mut *tx, input, apparent_power_va, status, "simulator").await?;
+
+    tx.commit().await?;
+
+    Ok(Some(reading))
 }

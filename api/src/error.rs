@@ -51,7 +51,7 @@ fn sentence_case(message: &str) -> String {
 /// A concurrent insert can lose the pre-check race and still hit a unique index.
 /// Postgres raises SQLSTATE 23505 for that, which is the caller's conflict, not a
 /// server fault.
-fn is_unique_violation(error: &sqlx::Error) -> bool {
+pub(crate) fn is_unique_violation(error: &sqlx::Error) -> bool {
     matches!(
         error,
         sqlx::Error::Database(db) if db.code().as_deref() == Some("23505")

@@ -115,7 +115,8 @@ async fn ingest(
     in_range(body.energy_kwh, ENERGY_RANGE, "energy")?;
     in_range(body.power_factor, POWER_FACTOR_RANGE, "power factor")?;
 
-    let reading = service::record(&state.pool, body, "hardware").await?;
+    let settings = crate::settings::service::load(&state.pool).await?;
+    let reading = service::record(&state.pool, body, "hardware", &settings).await?;
 
     Ok(Json(reading))
 }
