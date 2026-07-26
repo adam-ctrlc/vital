@@ -162,6 +162,22 @@ class Monitor {
     put(doc, "energy_kwh", energy, 3);
     put(doc, "temperature_c", temperature, 1);
 
+    // Heap health, for the question this firmware could not otherwise answer: does it
+    // last a month on a transformer, or only an afternoon on a bench.
+    //
+    // Read them together, because the two failure modes look different. `free` sliding
+    // downward on its own is a leak. `free` holding steady while `largest` sinks is
+    // fragmentation, and that is the likelier one here: every backend call builds and
+    // tears down a TLS context of tens of KB, which on a board without PSRAM comes out
+    // of the same pool as everything else. Once `largest` falls below what mbedTLS
+    // needs, posts start failing while `free` still looks healthy.
+    //
+    // `min_free` is the low water mark since boot, so a spike that nearly exhausted the
+    // heap is still visible afterwards rather than vanishing once it recovered.
+    doc["heap_free"] = ESP.getFreeHeap();
+    doc["heap_largest"] = ESP.getMaxAllocHeap();
+    doc["heap_min_free"] = ESP.getMinFreeHeap();
+
     serializeJson(doc, Serial);
     Serial.println();
   }
