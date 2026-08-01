@@ -183,13 +183,32 @@ class Monitor {
   }
 
   void showLcd() {
-    // Line 2 shows the live status and the thresholds it is judged against, so a
-    // change made in the app is visible on the board. Compact `load/tempC` keeps it
-    // within 16 columns even at the longest status word, OVERLOAD.
-    String line1 = "T:" + Lcd::formatFloat(temperature, 1) + "C VA:" + Lcd::formatFloat(apparentPower, 0);
-    String line2 = String(statusName()) + " " + String((int)vaLimit) + "/" +
-                   String((int)tempLimit) + "C";
-    lcd.show(line1, line2);
+    // Four rows of twenty, read top to bottom as headline then detail: what the board
+    // thinks, what it measured, and how close each limit is. Both thresholds are on
+    // screen beside the value they judge, so a change made in the app is visible on
+    // the board without opening the app again.
+    //
+    // Every number goes through Lcd::formatFloat, which renders a missing measurement
+    // as "--" rather than nan, so an unplugged sensor reads as absent instead of
+    // broken. Widths are chosen to leave slack at twenty columns: the longest status
+    // word is OVERLOAD, and show() truncates rather than wraps if anything overruns.
+    String header = "VITAL";
+    String status = statusName();
+    while (header.length() + status.length() < lcd.width()) header += ' ';
+    header += status;
+
+    String measured =
+        "V:" + Lcd::formatFloat(voltage, 1) + "  A:" + Lcd::formatFloat(current, 3);
+
+    String load = "VA:" + Lcd::formatFloat(apparentPower, 0) + "/" + String((int)vaLimit);
+    if (!isnan(apparentPower) && vaLimit > 0.0f) {
+      load += "  " + String((int)(apparentPower / vaLimit * 100.0f)) + "%";
+    }
+
+    String thermal = "T:" + Lcd::formatFloat(temperature, 1) + "/" +
+                     String((int)tempLimit) + "C  PF:" + Lcd::formatFloat(powerFactor, 2);
+
+    lcd.show(header, measured, load, thermal);
   }
 
   EnergyMeter &meter;

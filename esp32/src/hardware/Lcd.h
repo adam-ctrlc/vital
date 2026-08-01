@@ -38,23 +38,36 @@ class Lcd {
   bool present() const { return present_; }
   int status() const { return status_; }
 
-  /// Overwrites both rows in place, padding each to cols with spaces instead of
+  /// Callers that lay out a line need the width, and taking it from here rather than
+  /// the LCD_COLS macro keeps them from depending on Pins.h being included first.
+  uint8_t width() const { return cols; }
+
+  /// Overwrites every row in place, padding each to cols with spaces instead of
   /// clearing, to keep the display from flickering between updates.
-  void show(const String &line1, const String &line2) {
+  ///
+  /// The last two lines are optional, so the callers with only two things to say
+  /// (the Wi-Fi states, the test screens) stay unchanged. Rows they omit are blanked
+  /// rather than left showing whatever the previous screen put there.
+  void show(const String &line1, const String &line2, const String &line3 = String(),
+            const String &line4 = String()) {
     if (!present_) return;
 
-    String a = line1;
-    String b = line2;
-    if (a.length() > cols) a = a.substring(0, cols);
-    if (b.length() > cols) b = b.substring(0, cols);
-    while (a.length() < cols) a += ' ';
-    while (b.length() < cols) b += ' ';
+    const String *lines[MAX_ROWS] = {&line1, &line2, &line3, &line4};
 
-    lcd.setCursor(0, 0);
-    lcd.print(a);
-    if (rows > 1) {
-      lcd.setCursor(0, 1);
-      lcd.print(b);
+    for (uint8_t row = 0; row < rows && row < MAX_ROWS; row++) {
+      String text = *lines[row];
+      if (text.length() > cols) text = text.substring(0, cols);
+
+      // Reserved up front because the pad below appends one character at a time, and
+      // an Arduino String reallocates as it grows. On a 20x4 that is 80 characters a
+      // second at the sampling rate, and small repeated reallocations interleaved with
+      // the tens of KB a TLS handshake takes is what fragments the heap on a board
+      // with no PSRAM.
+      text.reserve(cols);
+      while (text.length() < cols) text += ' ';
+
+      lcd.setCursor(0, row);
+      lcd.print(text);
     }
   }
 
@@ -64,6 +77,10 @@ class Lcd {
   }
 
  private:
+  /// Ceiling on the rows show() can address. Four covers every HD44780 geometry the
+  /// hd44780 library drives, and bounds the pointer array above.
+  static constexpr uint8_t MAX_ROWS = 4;
+
   uint8_t sdaPin;
   uint8_t sclPin;
   uint8_t cols;

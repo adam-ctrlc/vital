@@ -35,13 +35,17 @@ class LcdTest {
 
     switch (step) {
       case 0:
-        lcd.show("LCD test", statusText());
+        lcd.show("LCD test", statusText(), "row 3", "row 4");
         break;
       case 1:
-        lcd.show("0123456789ABCDEF", "----------------");
+        // A ruler across all four rows: every column and every row should be filled
+        // edge to edge. Anything blank means the configured geometry does not match
+        // the panel, which is the failure this screen exists to catch.
+        lcd.show("01234567890123456789", "--------------------", "01234567890123456789",
+                 "--------------------");
         break;
       default:
-        lcd.show("Uptime", String(millis() / 1000) + "s");
+        lcd.show("Uptime", String(millis() / 1000) + "s", "", "");
         break;
     }
 

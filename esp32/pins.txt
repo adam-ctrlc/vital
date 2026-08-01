@@ -106,7 +106,7 @@ DS18B20 (temperature):
   Black (GND)   -> GND
   Note: internal pull up on P32 (INPUT_PULLUP) drives the bus, no external resistor needed.
 
-16x2 I2C LCD (PCF8574 backpack):
+20x4 I2C LCD (PCF8574 backpack):
   VCC -> 5V
   GND -> GND
   SDA -> P13

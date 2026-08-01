@@ -23,7 +23,7 @@ src/config/
   Pins.h                      Single home for every pin number and board wiring constant, with terminal comments.
 
 src/hardware/
-  Lcd.h                       16x2 I2C display wrapper (hd44780), padded no-flicker write, safe no-op when absent.
+  Lcd.h                       20x4 I2C display wrapper (hd44780), padded no-flicker write, safe no-op when absent.
   TemperatureProbe.h          DS18B20 async probe, keeps the last good reading, NAN-guards -127 and 85.
   EnergyMeter.h               PZEM-004T v3 wrapper, reads voltage/current/power/energy/frequency/pf as a struct.
   Relay.h                     Single relay output with configurable active level, tracks closed/open state.
@@ -60,9 +60,12 @@ COMPONENTS
 ----------
 Lcd
   Owns the hd44780 I2C driver. begin() starts the bus on the custom SDA/SCL pins and lets
-  hd44780 auto-detect the backpack address; present() and status() report the result; show(line1,
-  line2) overwrites both rows padded to width with no flicker and is a safe no-op when no LCD is
-  wired. formatFloat(value, digits) is a static helper that renders NAN as "--".
+  hd44780 auto-detect the backpack address; present() and status() report the result; width() reports
+  the configured columns so callers can lay out a line without reaching for the LCD_COLS macro;
+  show(line1, line2, line3, line4) overwrites every row padded to width with no flicker and is a safe
+  no-op when no LCD is wired. The last two lines default to empty, so the two-line callers (the Wi-Fi
+  states, the test screens) are unchanged and the rows they omit are blanked rather than left stale.
+  formatFloat(value, digits) is a static helper that renders NAN as "--".
 
 TemperatureProbe
   Owns a OneWire bus and DallasTemperature sensor on one pin. begin() enables the pull-up and starts
@@ -110,7 +113,7 @@ Secrets: credentials live in gitignored secrets.h, copied from secrets.example.h
   reach it as ../../secrets.h. It defines WIFI_SSID, WIFI_PASSWORD, BACKEND_URL, DEVICE_KEY.
 Test twins: each core/hardware class has a runner twin under src/tests that exercises it in isolation.
 Libraries to install (Library Manager):
-  hd44780 by Bill Perry      16x2 I2C LCD, auto-detects the PCF8574 backpack address and mapping.
+  hd44780 by Bill Perry      20x4 I2C LCD, auto-detects the PCF8574 backpack address and mapping.
   OneWire                    DS18B20 bus.
   DallasTemperature          DS18B20 temperature conversion.
   PZEM004Tv30                PZEM-004T v3 energy meter.
