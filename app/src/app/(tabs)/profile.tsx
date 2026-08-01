@@ -1,5 +1,6 @@
 import { useColorScheme } from 'nativewind';
 import At from 'phosphor-react-native/src/icons/At';
+import BellRinging from 'phosphor-react-native/src/icons/BellRinging';
 import Check from 'phosphor-react-native/src/icons/Check';
 import Envelope from 'phosphor-react-native/src/icons/Envelope';
 import Eye from 'phosphor-react-native/src/icons/Eye';
@@ -13,7 +14,7 @@ import SignOut from 'phosphor-react-native/src/icons/SignOut';
 import UserCircle from 'phosphor-react-native/src/icons/UserCircle';
 import X from 'phosphor-react-native/src/icons/X';
 import { useState } from 'react';
-import { KeyboardAvoidingView, ScrollView, View } from 'react-native';
+import { KeyboardAvoidingView, Linking, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppearanceModal } from '@/components/appearance-modal';
@@ -22,10 +23,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { IconInput } from '@/components/ui/icon-input';
+import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
 import * as authApi from '@/features/auth/api';
 import { useAuth } from '@/features/auth/context';
 import type { Role, User } from '@/features/auth/types';
+import { useNotifications } from '@/features/notifications/context';
 import { useAppearance } from '@/lib/appearance';
 
 /** Matches `--primary-foreground`, which the appearance provider pins to white. */
@@ -218,6 +221,23 @@ export default function ProfileScreen() {
   const { primary } = useAppearance();
   const { colorScheme } = useColorScheme();
   const danger = colorScheme === 'dark' ? '#f87171' : '#dc2626';
+
+  const { notificationsEnabled, setNotificationsEnabled } = useNotifications();
+  const [togglingNotifications, setTogglingNotifications] = useState(false);
+  // Set when the user asks for notifications and the OS refuses. Only the system
+  // settings can undo that, so the card says so rather than letting the switch snap
+  // back with no explanation.
+  const [notificationsBlocked, setNotificationsBlocked] = useState(false);
+
+  async function toggleNotifications(next: boolean) {
+    setTogglingNotifications(true);
+    try {
+      const applied = await setNotificationsEnabled(next);
+      setNotificationsBlocked(next && !applied);
+    } finally {
+      setTogglingNotifications(false);
+    }
+  }
 
   const [showAppearance, setShowAppearance] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
@@ -422,6 +442,44 @@ export default function ProfileScreen() {
         </Card>
 
         <PasswordCard />
+
+        <Card className="gap-0 py-0">
+          <CardHeader className="border-border border-b p-4">
+            <CardTitle className="text-base">Notifications</CardTitle>
+            <Text variant="muted" className="text-xs">
+              Applies to this device only.
+            </Text>
+          </CardHeader>
+          <CardContent className="gap-3 p-4">
+            <View className="flex-row items-center justify-between gap-3">
+              <View className="flex-1 gap-0.5">
+                <Text className="text-sm font-medium">Alert notifications</Text>
+                <Text variant="muted" className="text-xs leading-4">
+                  Buzz and show a banner when an alert is raised. The Alerts tab and its
+                  badge keep working either way.
+                </Text>
+              </View>
+              <Switch
+                checked={notificationsEnabled}
+                disabled={togglingNotifications}
+                onCheckedChange={(next) => void toggleNotifications(next)}
+              />
+            </View>
+
+            {notificationsBlocked ? (
+              <View className="gap-2">
+                <Text className="text-destructive text-xs leading-4">
+                  Android is refusing notifications for VITAL. The app cannot ask again once
+                  that has been set, so it has to be changed in system settings.
+                </Text>
+                <Button variant="outline" size="sm" onPress={() => void Linking.openSettings()}>
+                  <BellRinging size={14} weight="bold" color={primary.hex} />
+                  <Text className="text-xs">Open system settings</Text>
+                </Button>
+              </View>
+            ) : null}
+          </CardContent>
+        </Card>
 
         <Card className="gap-0 py-0">
           <CardHeader className="border-border border-b p-4">
