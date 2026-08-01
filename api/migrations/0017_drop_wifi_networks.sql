@@ -1,0 +1,15 @@
+-- Drops the orphaned wifi_networks table.
+--
+-- 0012 created it for app-managed Wi-Fi provisioning, which was reverted in ae37d30.
+-- Nothing has referenced it since: a search across the API, the app and the firmware
+-- finds the name only in the migration that created it. No endpoint reads it, so it has
+-- been dead weight rather than a live risk.
+--
+-- Worth removing anyway, because it stores a Wi-Fi password in plaintext (0012 line 8,
+-- seeded from the old device_config row). A credential column nothing needs is a
+-- credential column nobody is maintaining.
+--
+-- 0012 is deliberately left as it was. Editing an applied migration breaks sqlx's
+-- checksum on the next startup, and on a fresh database the create-then-drop costs
+-- nothing. Dropping the table takes its two partial unique indexes with it.
+drop table if exists wifi_networks;
