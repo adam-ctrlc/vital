@@ -65,7 +65,7 @@ P13     GPIO13          Fully free, reserved here for the LCD I2C SDA
 P4      GPIO4           Fully free
 P16     GPIO16 (RX2)    Fully free, reserved here for the PZEM-004T
 P17     GPIO17 (TX2)    Fully free, reserved here for the PZEM-004T
-P5      GPIO5           With care, strapping, fine as an output after boot
+P5      GPIO5           With care, strapping, fine as an output after boot, reserved here for the relay
 P15     GPIO15          With care, strapping, must be high at boot, fine after
 P2      GPIO2           With care, strapping, onboard LED, light use only
 SVP     GPIO36          Input only, good for analog sensors (ADC1)
@@ -104,3 +104,22 @@ DS18B20 (temperature):
         wires cluster next to the left-strip 5V and GND terminals for short runs.
   Note: hd44780 auto-detects the backpack I2C address and register mapping and
         drives whichever answers, so no address jumper guessing is needed.
+
+Relay module (load switching, active low):
+  IN  -> P5
+  VCC -> 5V
+  GND -> GND
+  Load: live line through COM and NO, so an unpowered or still booting board
+        leaves the load de-energized.
+  Note: active low. Pins.h sets RELAY_ON to LOW and RELAY_OFF to HIGH, which is
+        what most opto-isolated single channel boards expect.
+  Note: P5 was chosen for that polarity, not by accident. It is a strapping pin
+        with an internal pull up, so it sits HIGH from reset until setup() runs,
+        and HIGH is RELAY_OFF. Wiring the relay to an active high pin here would
+        energize the load during boot, before anything has been measured.
+  Note: some boards emit a brief pulse on GPIO5 at power up. Depending on the
+        module's input stage that can produce an audible click. Worth a scope
+        check on real hardware; it is not a design fault.
+  Note: the firmware closes the relay in Relay::begin() and never reopens it.
+        Monitor's NORMAL/WARNING/OVERLOAD machine drives the LCD, the serial
+        line and the backend alert only. See structure.txt.
