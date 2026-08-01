@@ -85,9 +85,20 @@ VITAL WIRING PLAN
 PZEM-004T v3 (energy meter, UART):
   PZEM TX  -> P16 (RX2)
   PZEM RX  -> P17 (TX2)
-  PZEM 5V  -> 5V
+  PZEM VCC -> 3V3
   PZEM GND -> GND
-  Note: PZEM TX idles at 5V on some modules; use a level shifter or divider into P16.
+  Note: the logic side runs on 3.3V, not 5V, and that is what makes the direct
+        connection safe. The module's TX idles at whatever rail it is powered
+        from, so on 3.3V it sits inside the ESP32's input range and no level
+        shifter or divider is needed between TX and P16. Powered from 5V it
+        would idle at 5V into a 3.3V only pin, which is the arrangement the
+        level shifter used to be there for.
+  Note: this is the mains isolated side only. The PZEM's measuring side stays on
+        the live conductor with its current transformer, and the opto isolation
+        between the two is what keeps this rail safe to touch.
+  Note: verified working on this board. Some PZEM units are fussier about a 3.3V
+        supply than others, so if a rebuilt board returns zeros or NaN from the
+        meter while the probe still reads, suspect the supply before the wiring.
 
 DS18B20 (temperature):
   Yellow (DATA) -> P32
