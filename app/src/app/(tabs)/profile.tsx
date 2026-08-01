@@ -280,7 +280,8 @@ export default function ProfileScreen() {
       <KeyboardAvoidingView className="flex-1" behavior="padding">
       <ScrollView
         contentContainerClassName="gap-4 p-4 pb-8"
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag">
         <View className="flex-row items-center gap-2">
           <UserCircle size={22} weight="fill" color={primary.hex} />
           <Text className="text-lg font-bold">Profile</Text>

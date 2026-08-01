@@ -278,10 +278,13 @@ export default function UsersScreen() {
   if (!token) return <Redirect href="/login" />;
   if (user && user.role !== 'admin') return <Redirect href="/dashboard" />;
 
+  // Bottom edge included: this screen sits outside the tabs group, so there is no tab bar
+  // to take the navigation bar's inset for it, and the last row would fall behind it.
   return (
-    <SafeAreaView className="bg-background flex-1" edges={['top']}>
+    <SafeAreaView className="bg-background flex-1" edges={['top', 'bottom']}>
       <KeyboardAvoidingView className="flex-1" behavior="padding">
-      <ScrollView contentContainerClassName="gap-4 p-4 pb-8" keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerClassName="gap-4 p-4 pb-8" keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag">
         <View className="flex-row items-center gap-2">
           <Button
             variant="ghost"

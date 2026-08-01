@@ -41,6 +41,54 @@ const BLOCKS = {
       { sym: String.raw`\cos\varphi`, desc: 'power factor' },
     ],
   },
+  apparent: {
+    equation: String.raw`S = V \cdot I`,
+    where: [
+      { sym: 'S', desc: 'apparent power (VA), what the thresholds judge' },
+      { sym: 'V', desc: 'RMS voltage (V)' },
+      { sym: 'I', desc: 'RMS current (A)' },
+    ],
+  },
+  powerFactor: {
+    equation: String.raw`\mathrm{PF} = \dfrac{P}{S} = \cos\varphi`,
+    where: [
+      { sym: String.raw`\mathrm{PF}`, desc: 'power factor, 0 to 1' },
+      { sym: 'P', desc: 'real power (W), what the load consumes' },
+      { sym: 'S', desc: 'apparent power (VA), what it draws' },
+      { sym: String.raw`\varphi`, desc: 'phase angle between voltage and current' },
+    ],
+  },
+  reactive: {
+    equation: String.raw`Q = \sqrt{S^{2} - P^{2}}`,
+    where: [
+      { sym: 'Q', desc: 'reactive power (var)' },
+      { sym: 'S', desc: 'apparent power (VA)' },
+      { sym: 'P', desc: 'real power (W)' },
+    ],
+  },
+  headroom: {
+    equation: String.raw`H = S_{\text{alarm}} - S`,
+    where: [
+      { sym: 'H', desc: 'headroom (VA), negative once over' },
+      { sym: String.raw`S_{\text{alarm}}`, desc: 'alarm threshold (VA)' },
+      { sym: 'S', desc: 'apparent power now (VA)' },
+    ],
+  },
+  energy: {
+    equation: String.raw`E = \int P \, dt`,
+    where: [
+      { sym: 'E', desc: 'energy (kWh), counted by the meter' },
+      { sym: 'P', desc: 'real power (W)' },
+      { sym: 't', desc: 'time' },
+    ],
+  },
+  fahrenheit: {
+    equation: String.raw`{}^{\circ}\mathrm{F} = {}^{\circ}\mathrm{C} \cdot \tfrac{9}{5} + 32`,
+    where: [
+      { sym: String.raw`{}^{\circ}\mathrm{C}`, desc: 'measured by the probe' },
+      { sym: String.raw`{}^{\circ}\mathrm{F}`, desc: 'derived on the server, never stored' },
+    ],
+  },
 };
 
 // Standalone unit labels shown next to reading titles.
@@ -49,6 +97,10 @@ const UNITS = {
   unitA: String.raw`(\mathrm{A})`,
   unitW: String.raw`(\mathrm{W\,/\,kW})`,
   unitHz: String.raw`(\mathrm{Hz})`,
+  unitVA: String.raw`(\mathrm{VA})`,
+  unitVar: String.raw`(\mathrm{var})`,
+  unitKWh: String.raw`(\mathrm{kWh})`,
+  unitC: String.raw`({}^{\circ}\mathrm{C})`,
 };
 
 const rendered = {};

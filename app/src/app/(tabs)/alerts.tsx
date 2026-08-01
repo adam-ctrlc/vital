@@ -155,7 +155,8 @@ export default function AlertsScreen() {
       <ScrollView
         ref={scroller}
         contentContainerClassName="gap-3 p-4 pb-8"
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag">
         <View className="flex-row items-center gap-2">
           <Bell size={22} weight="fill" color={primary.hex} />
           <Text className="text-lg font-bold">Alerts</Text>

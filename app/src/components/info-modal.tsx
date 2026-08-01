@@ -78,7 +78,7 @@ type Colors = { ac: string; fg: string; muted: string; amber: string; danger: st
 
 /** What each screen is for. Only the screens the signed-in role can open are listed. */
 function UsageTab({ isAdmin, colors }: { isAdmin: boolean; colors: Colors }) {
-  const { ac, fg, danger } = colors;
+  const { ac, fg, amber, danger } = colors;
 
   return (
     <>
@@ -112,8 +112,9 @@ function UsageTab({ isAdmin, colors }: { isAdmin: boolean; colors: Colors }) {
 
         {isAdmin ? (
           <IconItem icon={Gear} color={ac} title="Settings">
-            Set the load and temperature thresholds every reading is judged against, and manage the
-            ESP32: its link state and live telemetry.
+            Set the alarm, trip and temperature thresholds every reading is judged against, switch
+            between the simulation and the board, and manage the ESP32: its link state and live
+            telemetry.
           </IconItem>
         ) : null}
 
@@ -133,6 +134,31 @@ function UsageTab({ isAdmin, colors }: { isAdmin: boolean; colors: Colors }) {
           {isAdmin
             ? 'A repeat of the same kind does not stack: while one is unacknowledged, no duplicate is raised. The Logs tab also shows a red dot when new overloads are recorded.'
             : 'A repeat of the same kind does not stack: while one is unacknowledged, no duplicate is raised.'}
+        </Text>
+      </View>
+
+      <View className="gap-3">
+        <SectionTitle>Protection</SectionTitle>
+        <Text variant="muted" className="text-sm leading-5">
+          There are two load levels, and they do different things. The alarm only tells you: it
+          raises an alert and marks the reading as an overload, but the transformer keeps
+          supplying. The trip sits above it and is what actually cuts the load, so somebody has
+          a window to shed load themselves before the board does it for them.
+        </Text>
+        <IconItem icon={PlugsConnected} color={amber} title="When the load is cut">
+          The load has to stay above the trip level for three seconds first, so a motor starting
+          up cannot cut the supply. The board then opens the relay and holds it open for at
+          least thirty seconds.
+        </IconItem>
+        <IconItem icon={PlugsConnected} color={ac} title="When it comes back">
+          Once the load is back under the alarm level and the thirty seconds have passed. It
+          will not restore while the load is merely off the trip point, and it will not restore
+          at all while the energy meter is unreadable, because the board cannot confirm the
+          fault is gone.
+        </IconItem>
+        <Text variant="muted" className="text-sm leading-5">
+          This runs on the board itself, not here, so it still protects the transformer when the
+          Wi-Fi is down or the app is closed. A trip survives a reboot as well.
         </Text>
       </View>
 
@@ -187,29 +213,70 @@ function ReadingsTab({ colors }: { colors: Colors }) {
           Current the load draws.
         </IconItem>
 
-        <IconItem icon={Gauge} color={ac} title="Apparent power (VA)">
-          Voltage times current. This is the number the load threshold judges, because a 1 KVA
+        <IconItem icon={Gauge} color={ac} title="Apparent power" unit="unitVA" unitColor={fg}>
+          Voltage times current. This is the number both thresholds judge, because a 1 KVA
           transformer is rated in VA, not watts.
         </IconItem>
+        <View className="gap-1.5 pl-11">
+          <Formula name="apparent" color={fg} mutedColor={muted} />
+        </View>
 
         <IconItem icon={Gauge} color={ac} title="Real power" unit="unitW" unitColor={fg}>
           What the load actually consumes, measured by the meter rather than derived.
         </IconItem>
         <View className="gap-1.5 pl-11">
           <Formula name="power" color={fg} mutedColor={muted} />
-          <Text variant="muted" className="text-sm leading-5">
-            The power factor is the cosine of the phase angle between the voltage and current
-            waves. Reactive power is the rest of the triangle: Q = sqrt(S squared minus P squared).
-          </Text>
+        </View>
+
+        <IconItem icon={Gauge} color={ac} title="Power factor">
+          How much of the apparent power is doing real work, from 0 to 1. A value of 1 means
+          the voltage and current waves are in step and every VA is useful. Motors and
+          transformers pull it below 1, which is why a load can sit near the VA threshold
+          while drawing fewer watts.
+        </IconItem>
+        <View className="gap-1.5 pl-11">
+          <Formula name="powerFactor" color={fg} mutedColor={muted} />
+        </View>
+
+        <IconItem icon={Gauge} color={ac} title="Reactive power" unit="unitVar" unitColor={fg}>
+          The part that shuttles back and forth without doing work, sustaining the magnetic
+          fields in motors and windings. It completes the power triangle, so it is derived
+          rather than measured, and is shown only when real power was measured: it cannot be
+          recovered from apparent power alone.
+        </IconItem>
+        <View className="gap-1.5 pl-11">
+          <Formula name="reactive" color={fg} mutedColor={muted} />
         </View>
 
         <IconItem icon={WaveSine} color={ac} title="Frequency" unit="unitHz" unitColor={fg}>
           AC cycles per second. Nominal 60 Hz on the Philippine grid.
         </IconItem>
 
-        <IconItem icon={Thermometer} color={danger} title="Temperature (C)">
-          Transformer temperature. Its own threshold raises a separate alert from load.
+        <IconItem icon={Lightning} color={ac} title="Energy" unit="unitKWh" unitColor={fg}>
+          Cumulative energy the meter has counted since it was last reset. Unlike every other
+          reading this one only climbs, so it measures consumption over time rather than the
+          state right now.
         </IconItem>
+        <View className="gap-1.5 pl-11">
+          <Formula name="energy" color={fg} mutedColor={muted} />
+        </View>
+
+        <IconItem icon={Gauge} color={ac} title="Headroom" unit="unitVA" unitColor={fg}>
+          How much apparent power is left before the alarm threshold. It goes negative once
+          the load is over, which is the same moment the reading is marked as an overload.
+        </IconItem>
+        <View className="gap-1.5 pl-11">
+          <Formula name="headroom" color={fg} mutedColor={muted} />
+        </View>
+
+        <IconItem icon={Thermometer} color={danger} title="Temperature" unit="unitC" unitColor={fg}>
+          Transformer temperature, from the contact probe on the body. Its own threshold
+          raises a separate alert from load. It does not trip the relay: the threshold is an
+          advisory level for a transformer rather than a damage limit.
+        </IconItem>
+        <View className="gap-1.5 pl-11">
+          <Formula name="fahrenheit" color={fg} mutedColor={muted} />
+        </View>
       </View>
 
       <View className="gap-3">

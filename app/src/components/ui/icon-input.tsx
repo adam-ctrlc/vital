@@ -6,18 +6,22 @@ import { cn } from '@/lib/utils';
 
 type PhosphorIcon = React.ComponentType<{ size?: number; color?: string; weight?: 'bold' | 'fill' }>;
 
-type IconInputProps = React.ComponentProps<typeof TextInput> & {
-  icon: PhosphorIcon;
-  iconColor?: string;
-  unit?: string;
-  containerClassName?: string;
-  /** Tappable affordance rendered inside the field, after the text. */
-  action?: {
+// RefAttributes so a caller can hold the field and move focus to it, which is what makes
+// a "next" key on the keyboard actually go somewhere. React 19 passes ref through as an
+// ordinary prop, so the spread onto TextInput below is all the wiring it needs.
+type IconInputProps = React.ComponentProps<typeof TextInput> &
+  React.RefAttributes<TextInput> & {
     icon: PhosphorIcon;
-    label: string;
-    onPress: () => void;
+    iconColor?: string;
+    unit?: string;
+    containerClassName?: string;
+    /** Tappable affordance rendered inside the field, after the text. */
+    action?: {
+      icon: PhosphorIcon;
+      label: string;
+      onPress: () => void;
+    };
   };
-};
 
 /**
  * Like SearchField, the wrapper owns the fill and border and the TextInput is

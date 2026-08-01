@@ -276,7 +276,8 @@ export default function LogsScreen() {
       <ScrollView
         ref={scroller}
         contentContainerClassName="gap-3 p-4 pb-8"
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag">
         <View className="flex-row items-center gap-2">
           <ChartLine size={22} weight="fill" color={ac} />
           <Text className="text-lg font-bold">Data Logs</Text>

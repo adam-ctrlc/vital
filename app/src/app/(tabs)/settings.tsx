@@ -205,7 +205,8 @@ export default function SettingsScreen() {
       <KeyboardAvoidingView className="flex-1" behavior="padding">
       <ScrollView
         contentContainerClassName="gap-4 p-4 pb-8"
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag">
         <View className="flex-row items-center gap-2">
           <Gear size={22} weight="fill" color={primary.hex} />
           <Text className="text-lg font-bold">System Settings</Text>

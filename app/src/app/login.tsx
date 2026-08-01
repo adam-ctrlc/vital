@@ -9,7 +9,14 @@ import Lock from 'phosphor-react-native/src/icons/Lock';
 import Palette from 'phosphor-react-native/src/icons/Palette';
 import Wrench from 'phosphor-react-native/src/icons/Wrench';
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Image, KeyboardAvoidingView, ScrollView, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  ScrollView,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AboutModal } from '@/components/about-modal';
@@ -52,6 +59,7 @@ export default function LoginScreen() {
   const [showAppearance, setShowAppearance] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const scroller = useRef<ScrollView>(null);
+  const passwordField = useRef<TextInput>(null);
 
   /**
    * The form is the last thing in the scroll view, so scrolling to the end puts
@@ -92,6 +100,7 @@ export default function LoginScreen() {
           ref={scroller}
           contentContainerClassName="grow justify-center gap-6 p-6"
           keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}>
           <View className="flex-row items-center justify-end">
             <Button
@@ -159,6 +168,10 @@ export default function LoginScreen() {
                   autoCorrect={false}
                   autoComplete="username"
                   returnKeyType="next"
+                  // The key said "next" and did nothing. Without this the keyboard
+                  // just closed and the password field had to be found by tapping.
+                  onSubmitEditing={() => passwordField.current?.focus()}
+                  submitBehavior="submit"
                   placeholder="you@example.com"
                 />
               </View>
@@ -166,6 +179,7 @@ export default function LoginScreen() {
               <View className="gap-1.5">
                 <Text className="text-sm font-medium">Password</Text>
                 <IconInput
+                  ref={passwordField}
                   icon={Lock}
                   iconColor={primary.hex}
                   value={password}
