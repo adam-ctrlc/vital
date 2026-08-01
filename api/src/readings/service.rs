@@ -149,6 +149,7 @@ pub async fn live(pool: &PgPool, sample_interval_ms: i64) -> AppResult<LiveReadi
         apparent_power_va,
         status,
         load_threshold_va: settings.load_threshold_va,
+        trip_threshold_va: settings.trip_threshold_va,
         temp_threshold_c: settings.temp_threshold_c,
         temp_threshold_f: units::celsius_to_fahrenheit(settings.temp_threshold_c),
         load_percent: apparent_power_va.map(|apparent| apparent / settings.load_threshold_va * 100.0),
@@ -204,6 +205,7 @@ const SAMPLE_LOCK_KEY: i64 = 0x0056_4954_414C_01;
 #[derive(sqlx::FromRow)]
 struct LiveState {
     load_threshold_va: f64,
+    trip_threshold_va: f64,
     temp_threshold_c: f64,
     source_mode: String,
     updated_at: DateTime<Utc>,
@@ -214,6 +216,7 @@ impl LiveState {
     fn settings(&self) -> Settings {
         Settings {
             load_threshold_va: self.load_threshold_va,
+            trip_threshold_va: self.trip_threshold_va,
             temp_threshold_c: self.temp_threshold_c,
             source_mode: self.source_mode.clone(),
             updated_at: self.updated_at,
@@ -228,7 +231,7 @@ impl LiveState {
 
 async fn load_live_state(pool: &PgPool) -> AppResult<LiveState> {
     let state = sqlx::query_as::<_, LiveState>(
-        "select s.load_threshold_va, s.temp_threshold_c, s.source_mode, s.updated_at,
+        "select s.load_threshold_va, s.trip_threshold_va, s.temp_threshold_c, s.source_mode, s.updated_at,
                 (select (extract(epoch from recorded_at) * 1000)::bigint
                  from readings where source = 'simulator'
                  order by recorded_at desc limit 1) as latest_simulator_ms

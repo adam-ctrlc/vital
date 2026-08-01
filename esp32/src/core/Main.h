@@ -49,8 +49,17 @@ class Main {
     // Adopt the last thresholds seen so a reboot keeps the operator's values instead
     // of falling back to the compiled defaults until the first heartbeat lands.
     prefs.begin("vital", false);
-    monitor.setThresholds(prefs.getFloat("loadVa", 900.0f),
+    monitor.setThresholds(prefs.getFloat("loadVa", 900.0f), prefs.getFloat("tripVa", 980.0f),
                           prefs.getFloat("tempC", 40.0f));
+
+    // A trip has to outlive a reboot, because a fault is exactly the condition that
+    // browns out the supply. Coming back believing everything is fine would close
+    // straight back into it.
+    tripped = prefs.getBool("tripped", false);
+    if (tripped) {
+      Serial.println("restored a trip from before the reboot, load stays open");
+      monitor.restoreTrip(millis());
+    }
 
     net.begin();
     net.connect();
@@ -60,6 +69,13 @@ class Main {
     unsigned long now = millis();
 
     monitor.loop(now);
+
+    // Written only on the edge, so the flash sees one write per trip and one per
+    // reclose rather than one per sample.
+    if (monitor.isTripped() != tripped) {
+      tripped = monitor.isTripped();
+      prefs.putBool("tripped", tripped);
+    }
 
     if (WiFi.status() != WL_CONNECTED && now - lastReconnect >= RECONNECT_INTERVAL_MS) {
       lastReconnect = now;
@@ -91,10 +107,27 @@ class Main {
     if (!ack.ok) return;
 
     float va = ack.loadThresholdVa;
+    float trip = ack.tripThresholdVa;
     float temp = ack.tempThresholdC;
-    if (isnan(va) || isnan(temp)) return;
+    if (isnan(va) || isnan(trip) || isnan(temp)) return;
     if (va < MIN_LOAD_THRESHOLD_VA || va > MAX_LOAD_THRESHOLD_VA) {
       Serial.print("rejected out of range load threshold: ");
+      Serial.println(va, 0);
+      return;
+    }
+    if (trip < MIN_LOAD_THRESHOLD_VA || trip > MAX_LOAD_THRESHOLD_VA) {
+      Serial.print("rejected out of range trip threshold: ");
+      Serial.println(trip, 0);
+      return;
+    }
+    // Checked on the board as well as in the API, because this is the pair that
+    // decides when the load is cut and the response arrives over a TLS connection
+    // whose certificate is not validated. A trip at or below the alarm would open the
+    // relay during load the operator meant to merely be warned about.
+    if (trip <= va) {
+      Serial.print("rejected trip threshold not above the alarm: ");
+      Serial.print(trip, 0);
+      Serial.print(" <= ");
       Serial.println(va, 0);
       return;
     }
@@ -105,16 +138,20 @@ class Main {
     }
 
     if (fabs(va - monitor.loadThreshold()) < 0.05f &&
+        fabs(trip - monitor.tripThreshold()) < 0.05f &&
         fabs(temp - monitor.tempThreshold()) < 0.05f) {
       return;
     }
 
-    monitor.setThresholds(va, temp);
+    monitor.setThresholds(va, trip, temp);
     prefs.putFloat("loadVa", va);
+    prefs.putFloat("tripVa", trip);
     prefs.putFloat("tempC", temp);
 
-    Serial.print("thresholds updated -> VA:");
+    Serial.print("thresholds updated -> ALARM:");
     Serial.print(va, 0);
+    Serial.print(" TRIP:");
+    Serial.print(trip, 0);
     Serial.print(" TEMP:");
     Serial.println(temp, 0);
   }
@@ -130,4 +167,5 @@ class Main {
   unsigned long lastPost = 0;
   unsigned long lastHeartbeat = 0;
   unsigned long lastReconnect = 0;
+  bool tripped = false;
 };

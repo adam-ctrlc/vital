@@ -33,13 +33,24 @@ async fn update(
             "temperature threshold must be greater than zero".to_owned(),
         ));
     }
+    // Checked here as well as by the constraint, so the caller gets an explanation
+    // rather than a bare conflict. A trip at or below the alarm would defeat the point
+    // of having two: the relay would open in the same instant the alert was raised, or
+    // during load the alarm is meant to permit.
+    if body.trip_threshold_va <= body.load_threshold_va {
+        return Err(AppError::BadRequest(
+            "trip threshold must be greater than the alarm threshold".to_owned(),
+        ));
+    }
 
     let settings = sqlx::query_as::<_, Settings>(
-        "update settings set load_threshold_va = $1, temp_threshold_c = $2, updated_at = now()
+        "update settings set load_threshold_va = $1, trip_threshold_va = $2,
+                             temp_threshold_c = $3, updated_at = now()
          where id = 1
-         returning load_threshold_va, temp_threshold_c, source_mode, updated_at",
+         returning load_threshold_va, trip_threshold_va, temp_threshold_c, source_mode, updated_at",
     )
     .bind(body.load_threshold_va)
+    .bind(body.trip_threshold_va)
     .bind(body.temp_threshold_c)
     .fetch_one(&state.pool)
     .await?;

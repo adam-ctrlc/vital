@@ -35,8 +35,25 @@ class Monitor {
 
     bool sensorsOk = sample();
     updateStatus(now);
+    applyRelay();
     publish(sensorsOk);
     showLcd();
+  }
+
+  /// Whether the load is currently disconnected, so the caller can persist it.
+  bool isTripped() const { return status == STATUS_OVERLOAD; }
+
+  /// Restores a trip that survived a reboot.
+  ///
+  /// A fault is exactly when supply quality is worst, so browning out mid-trip is
+  /// realistic. Without this the board would come back believing everything is NORMAL
+  /// and close straight into the fault it had just disconnected. The lockout restarts
+  /// from now rather than resuming, which is the conservative direction: it waits the
+  /// full window again instead of assuming time served.
+  void restoreTrip(unsigned long now) {
+    status = STATUS_OVERLOAD;
+    trippedAt = now;
+    applyRelay();
   }
 
   Snapshot snapshot() const {
@@ -45,14 +62,30 @@ class Monitor {
 
   // Adopts operator thresholds (from the heartbeat). The clear points keep the
   // defaults' hysteresis: ~6% below the load limit, 3 C below the temperature limit.
-  void setThresholds(float va, float temp) {
-    vaLimit = va;
+  /// Two load levels and one temperature level.
+  ///
+  /// `alarm` is advisory: it lights WARNING and is the level the backend raises an
+  /// alert at, so somebody has a chance to shed load themselves. `trip` is what opens
+  /// the relay when nobody did. Keeping them apart is the whole point; equal values
+  /// would disconnect in the same instant the warning appeared.
+  ///
+  /// The relay recloses at the alarm level, so the two numbers define the deadband
+  /// between them: trip at 980, close again at 900. The load has to come back to what
+  /// the operator calls normal, not merely off the trip point, before it is restored.
+  ///
+  /// That also makes the deadband something you set rather than something derived from
+  /// a hidden percentage, and the trip-above-alarm rule the API and Main both enforce
+  /// is what guarantees it is never zero. Equal values would chatter the contacts.
+  void setThresholds(float alarm, float trip, float temp) {
+    vaLimit = alarm;
+    tripLimit = trip;
     tempLimit = temp;
-    vaClear = va * 0.94f;
+    tripClear = alarm;
     tempClear = temp > 3.0f ? temp - 3.0f : temp * 0.9f;
   }
 
   float loadThreshold() const { return vaLimit; }
+  float tripThreshold() const { return tripLimit; }
   float tempThreshold() const { return tempLimit; }
 
  private:
@@ -88,31 +121,55 @@ class Monitor {
     return true;
   }
 
-  bool overLimit() {
+  /// Advisory level. Drives WARNING on the display and mirrors what the backend alerts
+  /// on. Temperature is included here but deliberately not in the trip below.
+  bool overAlarm() {
     return (!isnan(apparentPower) && apparentPower >= vaLimit) ||
            (!isnan(temperature) && temperature >= tempLimit);
   }
 
-  bool belowClear() {
-    bool vaOk = isnan(apparentPower) || apparentPower <= vaClear;
-    bool tempOk = isnan(temperature) || temperature <= tempClear;
-    return vaOk && tempOk;
-  }
+  /// The level that opens the relay.
+  ///
+  /// Apparent power only. Temperature alarms but does not trip, because the operator
+  /// threshold for it is an advisory number for a transformer, not a damage limit, and
+  /// on a warm day here that would cut the load for no reason. A thermal trip belongs
+  /// on its own much higher threshold, not on the one the dashboard warns at.
+  bool overTrip() { return !isnan(apparentPower) && apparentPower >= tripLimit; }
+
+  /// Whether it is safe to close again: the load is back at or under the alarm level.
+  ///
+  /// A missing measurement is NOT clear. This is the inverse of how it used to read,
+  /// and the change matters: `isnan(apparentPower) || ...` meant that losing the meter
+  /// while tripped counted as the fault clearing, so the board would have reclosed into
+  /// a fault it could no longer see. Unknown holds the trip.
+  bool belowClear() { return !isnan(apparentPower) && apparentPower <= tripClear; }
 
   void updateStatus(unsigned long now) {
     switch (status) {
       case STATUS_NORMAL:
-        if (overLimit()) {
+        if (overAlarm()) {
           status = STATUS_WARNING;
           abnormalSince = now;
+          overTripSince = overTrip() ? now : 0;
         }
         break;
 
       case STATUS_WARNING:
-        if (!overLimit()) {
+        if (!overAlarm()) {
           status = STATUS_NORMAL;
           abnormalSince = 0;
-        } else if (now - abnormalSince >= TRIP_CONFIRM_MS) {
+          overTripSince = 0;
+          break;
+        }
+        // The confirm timer runs only while the load is actually above the trip level
+        // and restarts the moment it falls back, so separate brief excursions cannot
+        // accumulate into a trip between them.
+        if (!overTrip()) {
+          overTripSince = 0;
+          break;
+        }
+        if (overTripSince == 0) overTripSince = now;
+        if (now - overTripSince >= TRIP_CONFIRM_MS) {
           status = STATUS_OVERLOAD;
           trippedAt = now;
         }
@@ -122,9 +179,21 @@ class Monitor {
         if (belowClear() && now - trippedAt >= RECLOSE_LOCKOUT_MS) {
           status = STATUS_NORMAL;
           abnormalSince = 0;
+          overTripSince = 0;
         }
         break;
     }
+  }
+
+  /// Drives the contacts from the status rather than switching them at the transitions.
+  ///
+  /// Deriving it every cycle makes the relay self-correcting: a state restored from NVS
+  /// after a brownout, or any path that changes `status` without remembering to switch,
+  /// still ends up with the contacts matching what the machine believes. Edge triggered
+  /// calls are how a protection relay ends up closed while the display says OVERLOAD.
+  void applyRelay() {
+    bool shouldClose = status != STATUS_OVERLOAD;
+    if (relay.isClosed() != shouldClose) relay.set(shouldClose);
   }
 
   const char *statusName() {
@@ -200,13 +269,19 @@ class Monitor {
     String measured =
         "V:" + Lcd::formatFloat(voltage, 1) + "  A:" + Lcd::formatFloat(current, 3);
 
-    String load = "VA:" + Lcd::formatFloat(apparentPower, 0) + "/" + String((int)vaLimit);
-    if (!isnan(apparentPower) && vaLimit > 0.0f) {
-      load += "  " + String((int)(apparentPower / vaLimit * 100.0f)) + "%";
+    // Measured against the trip, not the alarm: this row answers "how close is the
+    // load to being cut", and the alarm level announces itself as WARNING in the
+    // header when it is crossed.
+    String load = "VA:" + Lcd::formatFloat(apparentPower, 0) + "/" + String((int)tripLimit);
+    if (!isnan(apparentPower) && tripLimit > 0.0f) {
+      load += "  " + String((int)(apparentPower / tripLimit * 100.0f)) + "%";
     }
 
-    String thermal = "T:" + Lcd::formatFloat(temperature, 1) + "/" +
-                     String((int)tempLimit) + "C  PF:" + Lcd::formatFloat(powerFactor, 2);
+    // Relay state earns its place now that the contacts actually move. Whether the
+    // load is energized is the one thing somebody standing at the box needs to read
+    // off the panel without interpreting anything.
+    String thermal = "T:" + Lcd::formatFloat(temperature, 1) + "/" + String((int)tempLimit) +
+                     "C  RLY:" + (relay.isClosed() ? "ON" : "OFF");
 
     lcd.show(header, measured, load, thermal);
   }
@@ -219,10 +294,15 @@ class Monitor {
   Status status = STATUS_NORMAL;
   unsigned long lastSample = 0;
   unsigned long abnormalSince = 0;
+  unsigned long overTripSince = 0;
   unsigned long trippedAt = 0;
 
+  // Compiled fallbacks for a board that has never heard from the backend. Sized for
+  // the 1 KVA unit: alarm with room to shed load, trip close enough to the rating to
+  // be a real backstop. NVS overrides these on the first heartbeat and keeps them.
   float vaLimit = 900.0f;
-  float vaClear = 850.0f;
+  float tripLimit = 980.0f;
+  float tripClear = 900.0f;
   float tempLimit = 40.0f;
   float tempClear = 37.0f;
 

@@ -124,6 +124,9 @@ pub struct LiveReading {
     pub apparent_power_va: Option<f64>,
     pub status: Status,
     pub load_threshold_va: f64,
+    /// Where the board opens the relay. Sent so the dashboard can show how much room is
+    /// left before the load is cut, not just before the alarm sounds.
+    pub trip_threshold_va: f64,
     pub temp_threshold_c: f64,
     pub temp_threshold_f: f64,
     pub load_percent: Option<f64>,

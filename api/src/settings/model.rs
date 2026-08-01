@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    /// Raises an alert and marks a reading as overload. Advisory: nothing is switched.
     pub load_threshold_va: f64,
+    /// Opens the relay. Always above the alarm, so an operator gets a window to act
+    /// before the board acts for them.
+    pub trip_threshold_va: f64,
     pub temp_threshold_c: f64,
     pub source_mode: String,
     pub updated_at: DateTime<Utc>,
@@ -14,6 +18,7 @@ pub struct Settings {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsUpdate {
     pub load_threshold_va: f64,
+    pub trip_threshold_va: f64,
     pub temp_threshold_c: f64,
 }
 

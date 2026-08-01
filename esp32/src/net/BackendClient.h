@@ -18,6 +18,7 @@ class BackendClient {
   struct HeartbeatResult {
     bool ok = false;
     float loadThresholdVa = NAN;
+    float tripThresholdVa = NAN;
     float tempThresholdC = NAN;
   };
 
@@ -58,6 +59,7 @@ class BackendClient {
       JsonDocument ack;
       if (!deserializeJson(ack, http.getString())) {
         result.loadThresholdVa = ack["loadThresholdVa"] | NAN;
+        result.tripThresholdVa = ack["tripThresholdVa"] | NAN;
         result.tempThresholdC = ack["tempThresholdC"] | NAN;
       }
     }

@@ -40,5 +40,8 @@ pub struct Heartbeat {
 #[serde(rename_all = "camelCase")]
 pub struct HeartbeatAck {
     pub load_threshold_va: f64,
+    /// The level at which the board opens the relay, sent alongside the alarm so both
+    /// stages of the protection scheme come from one operator edit.
+    pub trip_threshold_va: f64,
     pub temp_threshold_c: f64,
 }

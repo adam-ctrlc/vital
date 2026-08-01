@@ -3,6 +3,7 @@ import { useColorScheme } from 'nativewind';
 import Check from 'phosphor-react-native/src/icons/Check';
 import Gear from 'phosphor-react-native/src/icons/Gear';
 import Lightning from 'phosphor-react-native/src/icons/Lightning';
+import Plugs from 'phosphor-react-native/src/icons/Plugs';
 import PencilSimple from 'phosphor-react-native/src/icons/PencilSimple';
 import Thermometer from 'phosphor-react-native/src/icons/Thermometer';
 import Users from 'phosphor-react-native/src/icons/Users';
@@ -26,9 +27,9 @@ import type { SourceMode } from '@/features/settings/types';
 import { usePoll } from '@/hooks/use-poll';
 import { useAppearance } from '@/lib/appearance';
 
-type Thresholds = { load: string; temp: string };
+type Thresholds = { load: string; trip: string; temp: string };
 
-const EMPTY: Thresholds = { load: '', temp: '' };
+const EMPTY: Thresholds = { load: '', trip: '', temp: '' };
 
 const SOURCE_OPTIONS: { label: string; value: SourceMode }[] = [
   { label: 'Simulation', value: 'simulation' },
@@ -69,6 +70,7 @@ export default function SettingsScreen() {
       const current = await settingsApi.read(token ?? '');
       const next = {
         load: String(current.loadThresholdVa),
+        trip: String(current.tripThresholdVa),
         temp: String(current.tempThresholdC),
       };
       setSaved(next);
@@ -152,10 +154,19 @@ export default function SettingsScreen() {
 
   async function save() {
     const load = Number(draft.load);
+    const trip = Number(draft.trip);
     const temp = Number(draft.temp);
 
-    if (!Number.isFinite(load) || load <= 0 || !Number.isFinite(temp) || temp <= 0) {
-      setError('Enter a positive number for both thresholds');
+    const positive = [load, trip, temp].every((value) => Number.isFinite(value) && value > 0);
+    if (!positive) {
+      setError('Enter a positive number for every threshold');
+      return;
+    }
+    // Checked here as well as by the API so the mistake is caught before a round trip.
+    // Equal values would mean the load is cut in the same instant the alert appears,
+    // leaving nobody a window to shed load first.
+    if (trip <= load) {
+      setError('Trip must be higher than the alarm threshold');
       return;
     }
 
@@ -163,9 +174,10 @@ export default function SettingsScreen() {
     setError(null);
     setStatus(null);
     try {
-      const result = await settingsApi.update(token ?? '', load, temp);
+      const result = await settingsApi.update(token ?? '', load, trip, temp);
       const next = {
         load: String(result.loadThresholdVa),
+        trip: String(result.tripThresholdVa),
         temp: String(result.tempThresholdC),
       };
       setSaved(next);
@@ -179,7 +191,8 @@ export default function SettingsScreen() {
     }
   }
 
-  const dirty = draft.load !== saved.load || draft.temp !== saved.temp;
+  const dirty =
+    draft.load !== saved.load || draft.trip !== saved.trip || draft.temp !== saved.temp;
 
   // Hiding the tab in the layout only removes the button; the route stays registered,
   // so `dynavolt://settings` still lands here. The API enforces this too; the redirect
@@ -217,7 +230,7 @@ export default function SettingsScreen() {
           <CardContent className="gap-4 p-4">
             <View className="gap-1.5">
               <View className="flex-row items-baseline justify-between">
-                <Text className="text-sm font-medium">Load threshold</Text>
+                <Text className="text-sm font-medium">Alarm threshold</Text>
                 <Text variant="muted" className="text-[10px]">
                   Default 900 VA
                 </Text>
@@ -236,6 +249,34 @@ export default function SettingsScreen() {
                   placeholder="900"
                 />
               )}
+            </View>
+
+            <View className="gap-1.5">
+              <View className="flex-row items-baseline justify-between">
+                <Text className="text-sm font-medium">Trip threshold</Text>
+                <Text variant="muted" className="text-[10px]">
+                  Default 980 VA
+                </Text>
+              </View>
+              {loading ? (
+                <Skeleton className="h-11 w-full rounded-md" />
+              ) : (
+                <IconInput
+                  icon={Plugs}
+                  iconColor={primary.hex}
+                  unit="VA"
+                  value={draft.trip}
+                  onChangeText={(trip) => setDraft((prev) => ({ ...prev, trip }))}
+                  editable={editing}
+                  keyboardType="numeric"
+                  placeholder="980"
+                />
+              )}
+              <Text variant="muted" className="text-[10px] leading-4">
+                The board cuts the load here, holds it off for at least 30 seconds, and
+                restores it once the load is back under the alarm threshold. The alarm only
+                raises an alert, so keep this higher to leave room to shed load first.
+              </Text>
             </View>
 
             <View className="gap-1.5">

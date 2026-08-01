@@ -5,11 +5,16 @@ export function read(token: string) {
   return request<Settings>('/settings', { token });
 }
 
-export function update(token: string, loadThresholdVa: number, tempThresholdC: number) {
+export function update(
+  token: string,
+  loadThresholdVa: number,
+  tripThresholdVa: number,
+  tempThresholdC: number
+) {
   return request<Settings>('/settings', {
     method: 'PUT',
     token,
-    body: { loadThresholdVa, tempThresholdC },
+    body: { loadThresholdVa, tripThresholdVa, tempThresholdC },
   });
 }
 

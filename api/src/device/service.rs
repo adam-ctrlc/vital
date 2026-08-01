@@ -44,6 +44,7 @@ pub async fn record_heartbeat(pool: &PgPool, heartbeat: &Heartbeat) -> AppResult
 
     Ok(HeartbeatAck {
         load_threshold_va: settings.load_threshold_va,
+        trip_threshold_va: settings.trip_threshold_va,
         temp_threshold_c: settings.temp_threshold_c,
     })
 }
