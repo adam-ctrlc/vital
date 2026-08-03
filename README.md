@@ -2,14 +2,15 @@
 
 A Transformer Alert Management System for a 1 KVA distribution transformer, built as an electrical engineering thesis project at PHINMA Cagayan de Oro College, Carmen Campus.
 
-An ESP32 measures the transformer and reports it to a Rust API, which stores every sample, raises alerts when a reading crosses a threshold, and serves live readings to an Expo app. The API can also simulate the transformer from the clock, so the whole system can be demonstrated end to end with or without the hardware wired in.
+An ESP32 measures the transformer and reports it to a Rust API, which stores every sample, raises alerts when a reading crosses a threshold, and serves live readings to an Expo app. The board also protects the transformer itself, opening a relay when the load runs away. The API can simulate the transformer from the clock, so the whole system can be demonstrated end to end with or without the hardware wired in.
 
 ## What it does
 
 - Live monitoring of voltage, current, temperature and apparent power, with an animated AC waveform
-- Alerts raised automatically when load reaches **900 VA** or temperature reaches **40 °C**, with acknowledgement and response time, plus a push notification that vibrates the phone
+- **Two-stage load protection**: an alarm at **900 VA** raises an alert, and a trip at **980 VA** opens the relay. Temperature alarms at **40 °C** but does not trip
+- Alerts carry acknowledgement and response time, plus a push notification that vibrates the phone. Notifications can be switched off per device
 - Historical logs with server-side search, source and status filtering, and pagination, plus a daily load trend
-- A data-source switch between the built-in simulation and a live ESP32; hardware readings only show while the board is reporting, otherwise the dashboard reads "No data"
+- A data-source switch between a live ESP32 (the default) and the built-in simulation; hardware readings only show while the board is reporting, otherwise the dashboard reads "No data"
 - Real device telemetry (IP, signal, uptime, firmware) reported by the board itself
 - Configurable thresholds and full account management
 - Two roles, decided by the account rather than a picker at sign-in
@@ -35,7 +36,7 @@ The API is stateless. Serverless functions cannot keep a background loop alive, 
 
 **App** Expo SDK 54, Expo Router, React Native 0.81, NativeWind (Tailwind), React Native Reusables, react-native-reanimated and react-native-svg for the waveform and charts, Phosphor icons, KaTeX pre-rendered offline for the formulas.
 
-**Firmware** ESP32 reading a PZEM-004T v3 energy meter and a DS18B20 contact temperature probe, switching a relay, and driving a 16x2 I2C LCD. Header-only C++ with one class per component.
+**Firmware** ESP32 reading a PZEM-004T v3 energy meter and a DS18B20 contact temperature probe, tripping a relay, and driving a 20x4 I2C LCD. Header-only C++ with one class per component, ArduinoJson for every payload it builds or reads.
 
 ## Project structure
 
@@ -64,6 +65,10 @@ DATABASE_URL=postgres://...      # a session pooler, not a transaction pooler
 JWT_SECRET=a-long-random-string
 DEVICE_API_KEY=a-long-random-string
 PORT=8080
+
+# Read by the seeder only, never by the server.
+SEED_ADMIN_PASSWORD=...
+SEED_USER_PASSWORD=...
 ```
 
 ```bash
@@ -75,17 +80,23 @@ The development server applies migrations on start. Production never migrates: b
 
 ### Accounts
 
-There are no accounts until you create one, and **the seeder is not committed**: it holds real passwords and this repository is public. Create `api/src/bin/seed.rs`, which cargo discovers automatically:
+There are no accounts until you create one, and **the seeder is not committed**: this repository is public, and the accounts it creates are the live ones, since development and production share a database. Create `api/src/bin/seed.rs`, which cargo discovers automatically:
 
 ```rust
 use dynavolt_api::auth::{Role, password};
 use dynavolt_api::config::Config;
 use dynavolt_api::db;
-use dynavolt_api::error::AppResult;
+use dynavolt_api::error::{AppError, AppResult};
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
     dotenvy::dotenv().ok();
+
+    // From the environment, never a literal. The insert below reapplies the password
+    // on every run, so a password written here would silently undo any rotation.
+    let password_plain = std::env::var("SEED_ADMIN_PASSWORD")
+        .map_err(|_| AppError::MissingEnv("SEED_ADMIN_PASSWORD".to_owned()))?;
+
     let pool = db::connect(&Config::from_env()?.database_url).await?;
 
     sqlx::query(
@@ -95,7 +106,7 @@ async fn main() -> AppResult<()> {
     )
     .bind("you@example.com")
     .bind("you")
-    .bind(password::hash("your-password")?)
+    .bind(password::hash(&password_plain)?)
     .bind(Role::Admin.as_str())
     .bind("Your")
     .bind("Name")
@@ -132,7 +143,9 @@ Open it in Expo Go (SDK 54), or build a standalone APK with EAS (`eas build -p a
 
 ### Firmware
 
-Copy `esp32/secrets.example.h` to `esp32/secrets.h` (gitignored) and fill in `WIFI_SSID`, `WIFI_PASSWORD`, `BACKEND_URL` and `DEVICE_KEY` (the key must match the API's `DEVICE_API_KEY`). Install the libraries listed in `esp32/structure.txt` (hd44780, OneWire, DallasTemperature, PZEM004Tv30), pick a mode at the top of `esp32.ino`, and flash. `esp32/pins.txt` documents the wiring.
+Copy `esp32/secrets.example.h` to `esp32/secrets.h` (gitignored) and fill in `WIFI_SSID`, `WIFI_PASSWORD`, `BACKEND_URL` and `DEVICE_KEY` (the key must match the API's `DEVICE_API_KEY`). Install the libraries listed in `esp32/structure.txt` (hd44780, OneWire, DallasTemperature, PZEM004Tv30, and **ArduinoJson 7 or newer**), pick a mode at the top of `esp32.ino`, and flash. `esp32/pins.txt` documents the wiring.
+
+Flash `TEST_MODE = TEST_LCD` first. Its ruler screen fills all four rows to twenty columns, so a blank row or column means the configured geometry does not match the panel.
 
 ## API
 
@@ -141,7 +154,7 @@ Everything is under `/api/v1`. All routes except `/health` and `/auth/login` nee
 | Route | Method | Access | Notes |
 |---|---|---|---|
 | `/health` | GET | public | Check time, UTC and local |
-| `/auth/login` | POST | public | Email or username; returns a token and the account |
+| `/auth/login` | POST | public | Email or username; returns a token and the account. Rate limited per caller |
 | `/auth/me` | GET / PUT | any | Read or update the current account |
 | `/auth/password` | PUT | any | Change own password |
 | `/readings/latest` | GET | any | Live reading plus thresholds and link state |
@@ -150,9 +163,9 @@ Everything is under `/api/v1`. All routes except `/health` and `/auth/login` nee
 | `/readings/trend` | GET | admin | Daily averages; `days` |
 | `/alerts` | GET | any | Paginated; `q`, `kind`, `active`, `limit`, `offset` |
 | `/alerts/{id}/ack` | POST | any | Acknowledge, recording response time |
-| `/settings` | GET / PUT | any / admin | Thresholds |
+| `/settings` | GET / PUT | any / admin | Alarm, trip and temperature thresholds |
 | `/settings/source` | PUT | admin | Switch simulation or hardware |
-| `/device/status` | GET | any | Live link state and telemetry |
+| `/device/status` | GET | **admin** | Live link state and telemetry |
 | `/device/heartbeat` | POST | device key | Board reports its IP, signal, uptime, firmware |
 | `/users` | GET / POST | admin | List and create |
 | `/users/{id}` | PUT / DELETE | admin | Edit or remove |
@@ -178,10 +191,27 @@ A fully wired board reports:
 
 Missing measurements are stored as null and shown as "No data" in the app. Apparent power is derived as `S = V * I` when both are present. Reactive power is derived from the power triangle, `Q = sqrt(S^2 - P^2)`, only when real power was measured.
 
+### Protection
+
+Two load levels, and they do different things.
+
+| Level | Default | Effect |
+|---|---|---|
+| Alarm | 900 VA | Raises an alert, marks the reading as an overload. Nothing is switched |
+| Trip | 980 VA | Opens the relay after the load holds above it for 3 s |
+
+The relay closes again once the load is back at or under the **alarm** level and at least 30 seconds have passed since the trip. Reclosing at the alarm rather than a fixed percentage below the trip makes the deadband the operator's own two numbers, and the trip-above-alarm rule that the API, the app and the firmware each enforce is what guarantees it is never zero.
+
+Two deliberate choices worth knowing:
+
+- **This runs on the board**, not in the API, so the transformer stays protected with the Wi-Fi down or the app closed. A trip is written to NVS and survives a reboot, because a fault is exactly the condition that browns out the supply.
+- **A missing measurement holds the trip.** If the meter stops answering while tripped, the board will not reclose: it cannot confirm the fault is gone. Temperature alarms but never trips, since 40 °C is an advisory level for a transformer rather than a damage limit, and tripping on ambient warmth would be a nuisance.
+
 ## Notes
 
-- The data source is a runtime setting, not an environment variable. In hardware mode the API serves the newest hardware reading only while it is within a 30 second window; after that the dashboard reads "No data".
-- `SAMPLE_INTERVAL_MS` throttles writes, not the dashboard: the live view polls every second regardless. It defaults to 15s because a transformer's thermal behaviour moves over minutes.
+- The data source is a runtime setting, not an environment variable, and it defaults to **hardware**. In hardware mode the API serves the newest hardware reading only while it is within a 30 second window; after that the dashboard reads "No data". A dashboard stuck on "No data" usually means the board has stopped reporting, not that the app is failing to refresh.
+- `SAMPLE_INTERVAL_MS` throttles writes, not the dashboard: the live view polls every second regardless. It defaults to 15s because a transformer's thermal behavior moves over minutes.
+- Migrations are embedded into the binary at compile time by `sqlx::migrate!`, so `build.rs` tells cargo to rebuild whenever `migrations/` changes. Without it, adding a migration and starting the dev server looks completely healthy and silently skips it.
 - The database must be reached through a **session** pooler. sqlx names prepared statements per connection, so a transaction pooler multiplexes them onto shared backends and fails with `42P05 ... already exists` on about half of all requests.
 - After changing an environment variable on Vercel, deploy with `--force`. A cached build keeps the old environment.
 - Hardware ingest requires the `x-device-key` header to match the API's `DEVICE_API_KEY`; with no key set, ingest is rejected.
