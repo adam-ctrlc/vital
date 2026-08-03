@@ -1,1 +1,5 @@
 secrets.h
+
+# Windows shortcuts. Not project content, and they embed the local path and machine
+# name of whoever created them.
+*.lnk

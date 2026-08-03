@@ -61,7 +61,9 @@ export default function SettingsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [sourceMode, setSourceMode] = useState<SourceMode>('simulation');
+  // Matches the server's default, so the control does not show Simulation for the
+  // moment before the real setting loads and then flick over to ESP32.
+  const [sourceMode, setSourceMode] = useState<SourceMode>('hardware');
   const [connecting, setConnecting] = useState(false);
 
   const refresh = useCallback(async () => {
