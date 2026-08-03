@@ -46,12 +46,15 @@ function roleSummary(role: Role | undefined): string {
   }
 }
 
-/** Initials from the name, falling back to the email so the avatar is never blank. */
-function initials(first: string | undefined, last: string | undefined, email: string | undefined) {
+/**
+ * Initials from the name, falling back to the username so the avatar is never blank.
+ * The username rather than the email, because an account may have no email at all.
+ */
+function initials(first: string | undefined, last: string | undefined, username: string | undefined) {
   const letters = `${first?.[0] ?? ''}${last?.[0] ?? ''}`.trim();
   if (letters) return letters.toUpperCase();
 
-  return (email?.[0] ?? '?').toUpperCase();
+  return (username?.[0] ?? '?').toUpperCase();
 }
 
 /** A labelled row. The hint carries why a field is read-only, or that it is optional. */
@@ -258,7 +261,9 @@ export default function ProfileScreen() {
   // Admins may edit the login identity, so it has to pass the same shape checks the
   // server applies. Non-admins never send these, so they are always valid here.
   const identityValid =
-    !isAdmin || (draft.email.trim().includes('@') && draft.username.trim().length > 0);
+    !isAdmin ||
+    ((draft.email.trim() === '' || draft.email.trim().includes('@')) &&
+      draft.username.trim().length > 0);
 
   function startEditing() {
     setDraft(draftOf(user));
@@ -313,7 +318,7 @@ export default function ProfileScreen() {
               className="h-20 w-20 items-center justify-center rounded-full"
               style={{ backgroundColor: `${primary.hex}22` }}>
               <Text className="text-2xl font-bold" style={{ color: primary.hex }}>
-                {initials(user?.firstName, user?.lastName, user?.email)}
+                {initials(user?.firstName, user?.lastName, user?.username)}
               </Text>
             </View>
 

@@ -8,7 +8,9 @@ use crate::auth::Role;
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: Uuid,
-    pub email: String,
+    /// Absent when the account was created without one. The username is the identity
+    /// the system relies on; this is contact detail.
+    pub email: Option<String>,
     pub username: String,
     pub role: String,
     pub first_name: String,
@@ -21,7 +23,9 @@ pub struct User {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateUser {
-    pub email: String,
+    /// Optional: blank or absent creates the account without one.
+    #[serde(default)]
+    pub email: Option<String>,
     pub password: String,
     pub role: Role,
     pub first_name: String,
@@ -36,7 +40,9 @@ pub struct CreateUser {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateUser {
-    pub email: String,
+    /// Optional: blank or absent clears it.
+    #[serde(default)]
+    pub email: Option<String>,
     pub role: Role,
     pub first_name: String,
     #[serde(default)]

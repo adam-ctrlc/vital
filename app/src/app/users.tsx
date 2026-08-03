@@ -151,7 +151,7 @@ export default function UsersScreen() {
       middleName: row.middleName ?? '',
       lastName: row.lastName,
       username: row.username,
-      email: row.email,
+      email: row.email ?? '',
       password: '',
       role: row.role,
     });
@@ -198,7 +198,7 @@ export default function UsersScreen() {
         username: draft.username.trim() || undefined,
       });
       cancel();
-      setStatus(`Account created for ${draft.email.trim()}`);
+      setStatus(`Account created for ${draft.username.trim() || draft.firstName.trim()}`);
       await refresh();
     } catch (caught) {
       setError((caught as Error).message);
@@ -225,7 +225,7 @@ export default function UsersScreen() {
       });
       setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
       cancel();
-      setStatus(`Account updated for ${updated.email}`);
+      setStatus(`Account updated for ${updated.fullName || updated.username}`);
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -241,7 +241,7 @@ export default function UsersScreen() {
     setStatus(null);
     try {
       await usersApi.remove(token ?? '', target.id);
-      setStatus(`Deleted ${target.fullName || target.email}`);
+      setStatus(`Deleted ${target.fullName || target.username}`);
       setPendingDelete(null);
       await refresh();
     } catch (caught) {
@@ -257,7 +257,7 @@ export default function UsersScreen() {
   const canSave =
     draft.firstName.trim().length > 0 &&
     draft.lastName.trim().length > 0 &&
-    draft.email.trim().includes('@') &&
+    (draft.email.trim() === '' || draft.email.trim().includes('@')) &&
     draft.password.length >= MIN_PASSWORD &&
     !busy;
 
@@ -266,7 +266,7 @@ export default function UsersScreen() {
   const canSaveEdit =
     draft.firstName.trim().length > 0 &&
     draft.lastName.trim().length > 0 &&
-    draft.email.trim().includes('@') &&
+    (draft.email.trim() === '' || draft.email.trim().includes('@')) &&
     (draft.password.length === 0 || draft.password.length >= MIN_PASSWORD) &&
     !busy;
 
@@ -358,7 +358,9 @@ export default function UsersScreen() {
                     onChangeText={(username) => setDraft((p) => ({ ...p, username }))}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    placeholder="Generated from the name"
+                    // Short because this field shares its row with the Generate button,
+                    // leaving little width. The hint above already explains the rest.
+                    placeholder="From the name"
                   />
                   <Button
                     variant="outline"
@@ -372,7 +374,7 @@ export default function UsersScreen() {
                 </View>
               </Field>
 
-              <Field label="Email">
+              <Field label="Email" hint="Optional">
                 <IconInput
                   icon={Envelope}
                   iconColor={primary.hex}
@@ -506,14 +508,14 @@ export default function UsersScreen() {
                       <View className="flex-1 gap-0.5">
                         <View className="flex-row items-baseline gap-1.5">
                           <Text className="font-semibold leading-tight">
-                            {row.fullName || row.email}
+                            {row.fullName || row.username}
                           </Text>
                           <Text variant="muted" className="text-xs">
                             @{row.username}
                           </Text>
                         </View>
                         <Text variant="muted" className="text-xs">
-                          {row.email}
+                          {row.email ?? 'No email'}
                         </Text>
                       </View>
                       <Badge variant={isAdmin ? 'default' : 'secondary'}>
@@ -534,16 +536,22 @@ export default function UsersScreen() {
                         <PencilSimple size={14} weight="bold" color={primary.hex} />
                         <Text>Edit</Text>
                       </Button>
-                      {/* The API refuses this anyway; disabling it says so before the tap. */}
+                      {/* The API refuses both of these anyway; disabling says so before
+                          the tap. An admin has to be demoted before it can be removed,
+                          so losing admin access takes two deliberate steps. */}
                       <Button
                         variant="outline"
                         size="sm"
                         className="flex-1"
-                        disabled={isSelf}
+                        disabled={isSelf || isAdmin}
                         onPress={() => setPendingDelete(row)}>
-                        <Trash size={14} weight="bold" color={isSelf ? muted : danger} />
-                        <Text style={{ color: isSelf ? muted : danger }}>
-                          {isSelf ? 'This is you' : 'Delete'}
+                        <Trash
+                          size={14}
+                          weight="bold"
+                          color={isSelf || isAdmin ? muted : danger}
+                        />
+                        <Text style={{ color: isSelf || isAdmin ? muted : danger }}>
+                          {isSelf ? 'This is you' : isAdmin ? 'Admin' : 'Delete'}
                         </Text>
                       </Button>
                     </View>
@@ -557,7 +565,7 @@ export default function UsersScreen() {
       <ConfirmModal
         visible={pendingDelete !== null}
         title="Delete account?"
-        message={`${pendingDelete?.fullName || pendingDelete?.email} will lose access immediately. This cannot be undone.`}
+        message={`${pendingDelete?.fullName || pendingDelete?.username} will lose access immediately. This cannot be undone.`}
         confirmLabel="Delete account"
         destructive
         busy={deleting}

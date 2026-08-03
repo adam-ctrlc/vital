@@ -35,7 +35,7 @@ pub struct LoginRequest {
 #[serde(rename_all = "camelCase")]
 pub struct UserResponse {
     pub id: Uuid,
-    pub email: String,
+    pub email: Option<String>,
     pub username: String,
     pub role: Role,
     pub first_name: String,
@@ -69,7 +69,7 @@ pub struct LoginResponse {
 #[derive(Debug, sqlx::FromRow)]
 struct Credentials {
     id: Uuid,
-    email: String,
+    email: Option<String>,
     username: String,
     password_hash: String,
     role: String,
@@ -225,15 +225,23 @@ async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<Use
 fn resolve_email(
     is_admin: bool,
     provided: Option<&str>,
-    current: &str,
+    current: Option<&str>,
 ) -> AppResult<Option<String>> {
     let Some(raw) = provided else {
         return Ok(None);
     };
     let normalized = raw.trim().to_lowercase();
 
+    // Blank leaves it alone rather than clearing, because the update coalesces a null
+    // to the stored value anyway. It matters now that an account may legitimately have
+    // no email: without this, saving the profile of one would fail the `@` check on a
+    // field the owner never filled in.
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
     match is_admin {
-        false if normalized == current => Ok(None),
+        false if normalized == current.unwrap_or_default() => Ok(None),
         false => Err(AppError::Forbidden),
         true if normalized.contains('@') => Ok(Some(normalized)),
         true => Err(AppError::BadRequest("Invalid email".to_owned())),
@@ -284,7 +292,7 @@ async fn update_me(
         .ok_or(AppError::NotFound)?;
 
     let is_admin = auth.role.is_admin();
-    let email = resolve_email(is_admin, body.email.as_deref(), &current.email)?;
+    let email = resolve_email(is_admin, body.email.as_deref(), current.email.as_deref())?;
     let username = resolve_username(is_admin, body.username.as_deref(), &current.username)?;
 
     // RETURNING reflects the new values, so full_name is composed post-update.

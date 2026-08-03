@@ -2,7 +2,8 @@ export type Role = 'admin' | 'user';
 
 export type User = {
   id: string;
-  email: string;
+  /** Absent when the account was created without one. */
+  email: string | null;
   username: string;
   role: Role;
   firstName: string;

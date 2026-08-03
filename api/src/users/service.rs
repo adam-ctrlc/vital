@@ -30,7 +30,7 @@ pub async fn create(pool: &PgPool, body: &CreateUser) -> AppResult<()> {
         "insert into users (email, username, password_hash, role, first_name, middle_name, last_name)
          values ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(body.email.trim().to_lowercase())
+    .bind(clean_optional(body.email.as_deref()).map(|value| value.to_lowercase()))
     .bind(username)
     .bind(password_hash)
     .bind(body.role.as_str())
@@ -67,7 +67,7 @@ pub async fn update(pool: &PgPool, id: Uuid, body: &UpdateUser) -> AppResult<Use
                    trim(concat_ws(' ', first_name, middle_name, last_name)) as full_name,
                    created_at",
     )
-    .bind(body.email.trim().to_lowercase())
+    .bind(clean_optional(body.email.as_deref()).map(|value| value.to_lowercase()))
     .bind(body.role.as_str())
     .bind(body.first_name.trim())
     .bind(clean_optional(body.middle_name.as_deref()))

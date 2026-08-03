@@ -2,7 +2,8 @@ import type { Role } from '@/features/auth/types';
 
 export type ManagedUser = {
   id: string;
-  email: string;
+  /** Absent when the account was created without one. */
+  email: string | null;
   username: string;
   role: Role;
   firstName: string;

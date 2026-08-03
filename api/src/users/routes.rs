@@ -5,12 +5,14 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::auth::Role;
 use crate::auth::extract::AdminUser;
 use crate::error::{AppError, AppResult};
 use crate::search;
 use crate::state::AppState;
 use crate::users::model::{
-    CreateUser, SuggestUsername, UpdateUser, User, UsernameSuggestion, clean_username,
+    CreateUser, SuggestUsername, UpdateUser, User, UsernameSuggestion, clean_optional,
+    clean_username,
 };
 use crate::users::service;
 
@@ -95,7 +97,10 @@ async fn create(
             "password must be at least 8 characters".to_owned(),
         ));
     }
-    if !body.email.contains('@') {
+    // Only checked when one was given. Blank means the account simply has no email,
+    // which the username covers: it is generated from the name and is what signs in.
+    let email = clean_optional(body.email.as_deref()).map(|value| value.to_lowercase());
+    if email.as_deref().is_some_and(|value| !value.contains('@')) {
         return Err(AppError::BadRequest("invalid email".to_owned()));
     }
     if body.first_name.trim().is_empty() {
@@ -106,7 +111,7 @@ async fn create(
     }
 
     let taken: Option<Uuid> = sqlx::query_scalar("select id from users where email = $1")
-        .bind(body.email.trim().to_lowercase())
+        .bind(email.clone())
         .fetch_optional(&state.pool)
         .await?;
 
@@ -140,7 +145,9 @@ async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateUser>,
 ) -> AppResult<Json<User>> {
-    if !body.email.contains('@') {
+    // Blank clears it, so an account created without an email can stay that way and
+    // one that has it can have it removed.
+    if clean_optional(body.email.as_deref()).is_some_and(|value| !value.contains('@')) {
         return Err(AppError::BadRequest("invalid email".to_owned()));
     }
     if body.first_name.trim().is_empty() {
@@ -184,6 +191,24 @@ async fn remove(
     if admin.0.id == id {
         return Err(AppError::BadRequest(
             "you cannot delete your own account".to_owned(),
+        ));
+    }
+
+    // NotFound before the role guard, so a missing id never reads as a role error.
+    let target_role: String = sqlx::query_scalar("select role from users where id = $1")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // Admins cannot remove each other. Self-deletion was already blocked, which left
+    // the one case it was meant to prevent still open: two admins can delete each
+    // other, and the last one standing can be deleted by nobody but themselves, which
+    // they cannot do either. Requiring an admin account to be demoted before it can be
+    // removed makes losing admin access a deliberate two-step act rather than one tap.
+    if target_role == Role::Admin.as_str() {
+        return Err(AppError::BadRequest(
+            "an admin cannot be deleted. Change the role to user first".to_owned(),
         ));
     }
 
