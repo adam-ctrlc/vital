@@ -308,8 +308,11 @@ export function NotificationsProvider({
   useEffect(() => {
     if (!token || !enabled) return;
 
-    void registerDevice(token);
-  }, [token, enabled]);
+    // Re-registered whenever the tone changes, not just at sign-in: the server composes
+    // the push and reads the channel off the stored token, so a tone chosen here is
+    // silent when the app is closed until the server has been told about it.
+    void registerDevice(token, alertSound);
+  }, [token, enabled, alertSound]);
 
   useEffect(() => {
     if (!token) return;
@@ -440,7 +443,7 @@ export function NotificationsProvider({
         setEnabled(true);
         enabledRef.current = true;
         await saveEnabled(true);
-        if (token) void registerDevice(token);
+        if (token) void registerDevice(token, alertSoundRef.current);
         return true;
       }
 

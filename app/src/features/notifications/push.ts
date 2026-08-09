@@ -3,7 +3,12 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { ALERT_SOUNDS, soundFor, type AlertSoundName } from '@/features/notifications/alert-sound';
+import {
+  ALERT_SOUNDS,
+  DEFAULT_SOUND,
+  soundFor,
+  type AlertSoundName,
+} from '@/features/notifications/alert-sound';
 import { request } from '@/lib/api-client';
 
 /** Expo Go dropped remote push in SDK 53+; a development build is required. */
@@ -74,7 +79,10 @@ export async function ensurePermission(): Promise<boolean> {
  * Go, on a simulator, or without an EAS project. Local notifications still work in
  * all of those, so a failure here must not take them down with it.
  */
-export async function registerDevice(token: string): Promise<boolean> {
+export async function registerDevice(
+  token: string,
+  sound: AlertSoundName = DEFAULT_SOUND
+): Promise<boolean> {
   if (!canReceiveRemotePush()) return false;
 
   try {
@@ -84,7 +92,15 @@ export async function registerDevice(token: string): Promise<boolean> {
     await request<void>('/notifications/register', {
       method: 'POST',
       token,
-      body: { token: pushToken.data, platform: Platform.OS },
+      // The chosen channel travels with the token, because a remote push is composed on
+      // the server and Android reads the sound off the channel it is delivered on. A
+      // push that names no channel lands on the default one, which is why a tone played
+      // in the app and went silent the moment it was closed.
+      body: {
+        token: pushToken.data,
+        platform: Platform.OS,
+        channelId: Platform.OS === 'android' ? soundFor(sound).channelId : undefined,
+      },
     });
 
     return true;
