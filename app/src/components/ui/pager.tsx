@@ -3,12 +3,24 @@ import ArrowRight from 'phosphor-react-native/src/icons/ArrowRight';
 import CaretLeft from 'phosphor-react-native/src/icons/CaretLeft';
 import CaretRight from 'phosphor-react-native/src/icons/CaretRight';
 import { useState } from 'react';
-import { Pressable, TextInput, View } from 'react-native';
+import { Pressable, TextInput, View, useWindowDimensions } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import { cn } from '@/lib/utils';
-import { pageCount, pageIndex, pageItems, pageRange } from '@/lib/pagination';
+import { MAX_PAGES, pageCount, pageIndex, pageItems, pageRange } from '@/lib/pagination';
+
+/**
+ * Cell widths in pixels, matching the classes used below.
+ *
+ * Kept as numbers because the row has to know whether it fits before it renders, and a
+ * class name cannot be measured. They must be changed together with the classes.
+ */
+const ARROW = 40; // w-10
+const NUMBER = 36; // w-9
+const GAP = 28; // w-7
+/** The `p-4` the screens put around this, which the row does not get to use. */
+const SCREEN_PADDING = 32;
 
 type PagerProps = {
   total: number;
@@ -43,6 +55,15 @@ export function Pager({
   const disabledColor = colorScheme === 'dark' ? '#3f3f46' : '#d4d4d8';
 
   const [jump, setJump] = useState('');
+  const [jumpError, setJumpError] = useState<string | null>(null);
+
+  // The cells below are fixed width and React Native does not shrink flex children by
+  // default, so a row that does not fit is a row that runs off the screen. Rather than
+  // let that happen, the budget is derived from the width actually available: five
+  // numbers need a 348px screen, and a 320px phone would overflow by 28.
+  const { width } = useWindowDimensions();
+  const available = width - SCREEN_PADDING;
+  const slots = [MAX_PAGES, 4, 3].find((n) => ARROW * 2 + GAP * 2 + NUMBER * n <= available) ?? 3;
 
   const pages = pageCount(total, limit);
   const current = pageIndex(offset, limit) + 1; // 1-based
@@ -54,10 +75,47 @@ export function Pager({
   const canPrev = current > 1;
   const canNext = current < pages;
 
+  /**
+   * Keeps the field from ever holding a page that does not exist.
+   *
+   * A keystroke that would take the value past the last page is refused rather than
+   * accepted and quietly clamped on submit: clamping means typing 999 lands you on
+   * page 20 with nothing to say why, which reads as the field ignoring you.
+   *
+   * Non-digits are stripped because a number pad still offers them on some keyboards,
+   * and leading zeros go too, so "007" cannot pass a length check it should not.
+   */
+  function changeJump(text: string) {
+    const digits = text.replace(/[^0-9]/g, '').replace(/^0+/, '');
+
+    if (digits === '') {
+      setJump('');
+      setJumpError(null);
+      return;
+    }
+
+    if (Number(digits) > pages) {
+      setJumpError(`There ${pages === 1 ? 'is' : 'are'} only ${pages} pages.`);
+      return;
+    }
+
+    setJump(digits);
+    setJumpError(null);
+  }
+
   function submitJump() {
     const page = Number.parseInt(jump, 10);
-    if (Number.isFinite(page)) goTo(page);
+
+    // Reachable even though the field is guarded: narrowing a filter can shrink the
+    // list under a number that was valid when it was typed.
+    if (!Number.isFinite(page) || page < 1 || page > pages) {
+      setJumpError(`Enter a page between 1 and ${pages}.`);
+      return;
+    }
+
+    goTo(page);
     setJump('');
+    setJumpError(null);
   }
 
   return (
@@ -76,7 +134,7 @@ export function Pager({
           label="Previous page"
         />
 
-        {pageItems(current, pages).map((item, index) => {
+        {pageItems(current, pages, slots).map((item, index) => {
           if (item === 'gap') {
             return (
               <View
@@ -120,28 +178,39 @@ export function Pager({
         />
       </View>
 
-      {pages > 7 ? (
-        <View className="flex-row items-center gap-2">
-          <Text variant="muted" className="text-xs">
-            Go to page
-          </Text>
-          <TextInput
-            value={jump}
-            onChangeText={setJump}
-            onSubmitEditing={submitJump}
-            onFocus={onInputFocus}
-            keyboardType="number-pad"
-            returnKeyType="go"
-            placeholder={`1-${pages}`}
-            placeholderTextColor={muted}
-            textAlignVertical="center"
-            style={{ paddingVertical: 0 }}
-            className="border-input bg-background text-foreground h-9 w-20 rounded-md border px-2 text-center text-sm leading-4"
-          />
-          <Button size="sm" className="h-9" disabled={jump.trim() === ''} onPress={submitJump}>
-            <ArrowRight size={14} weight="bold" color="#ffffff" />
-            <Text className="text-xs">Go</Text>
-          </Button>
+      {pages > MAX_PAGES ? (
+        <View className="items-center gap-1">
+          <View className="flex-row items-center gap-2">
+            <Text variant="muted" className="text-xs">
+              Go to page
+            </Text>
+            <TextInput
+              value={jump}
+              onChangeText={changeJump}
+              onSubmitEditing={submitJump}
+              onFocus={onInputFocus}
+              keyboardType="number-pad"
+              returnKeyType="go"
+              // A second guard behind changeJump, for a paste that arrives whole.
+              maxLength={String(pages).length}
+              placeholder={`1-${pages}`}
+              placeholderTextColor={muted}
+              textAlignVertical="center"
+              style={{ paddingVertical: 0 }}
+              className={cn(
+                'bg-background text-foreground h-9 w-20 rounded-md border px-2 text-center text-sm leading-4',
+                jumpError ? 'border-destructive' : 'border-input'
+              )}
+            />
+            <Button size="sm" className="h-9" disabled={jump.trim() === ''} onPress={submitJump}>
+              <ArrowRight size={14} weight="bold" color="#ffffff" />
+              <Text className="text-xs">Go</Text>
+            </Button>
+          </View>
+
+          {jumpError ? (
+            <Text className="text-destructive text-[10px]">{jumpError}</Text>
+          ) : null}
         </View>
       ) : null}
     </View>

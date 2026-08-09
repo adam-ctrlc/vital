@@ -25,23 +25,62 @@ export function pageRange(offset: number, limit: number, total: number) {
 }
 
 /**
- * The page numbers to show, with 'gap' markers where a run is elided. Always keeps
- * the first and last page plus the current one and its immediate neighbours, so even
- * a long list stays one compact row: current 10 of 20 becomes [1, gap, 9, 10, 11,
- * gap, 20], and current 1 becomes [1, 2, gap, 20]. The prev/next arrows do the rest.
+ * How many numbered cells the row may ever show.
+ *
+ * The row has to survive a narrow phone alongside two arrows, so this is a hard budget
+ * rather than a target: the first and last page always take one each, leaving three for
+ * the window around the current page.
+ */
+export const MAX_PAGES = 5;
+
+/**
+ * The page numbers to show, with 'gap' markers where a run is elided.
+ *
+ * Always keeps the first and last page so the ends stay reachable in one tap, and
+ * spends the remaining three slots on the current page and its neighbours. Which side
+ * the gap falls on depends on where the current page sits:
+ *
+ *   near the start   1 2 3 4 ... 20
+ *   in the middle    1 ... 9 10 11 ... 20
+ *   near the end     1 ... 17 18 19 20
+ *
+ * Every case shows the same number of cells, so the row never changes width as you
+ * page through it. The arrows do the single steps.
  *
  * @param current 1-based current page.
+ * @param maxPages How many numbers may be shown. The caller lowers this on a narrow
+ *   screen, where five cells plus two arrows and two ellipses do not fit.
  */
-export function pageItems(current: number, totalPages: number): (number | 'gap')[] {
+export function pageItems(
+  current: number,
+  totalPages: number,
+  maxPages: number = MAX_PAGES
+): (number | 'gap')[] {
   if (totalPages <= 1) return [1];
 
-  // Up to 7 pages fit without eliding, so show them all rather than add ellipses.
-  if (totalPages <= 7) {
+  // Never below three: the first page, the last page, and the one you are on. Fewer
+  // than that cannot show all three at once.
+  const budget = Math.max(3, maxPages);
+
+  // Everything fits in the budget, so eliding would hide pages for no gain.
+  if (totalPages <= budget) {
     return Array.from({ length: totalPages }, (_, i) => i + 1);
   }
 
-  const start = Math.max(2, current - 1);
-  const end = Math.min(totalPages - 1, current + 1);
+  // The slots left between the two ends. The window slides but never shrinks, which is
+  // what keeps the row a constant width.
+  const window = budget - 2;
+  const half = Math.floor(window / 2);
+
+  let start = Math.max(2, current - half);
+  let end = start + window - 1;
+
+  // Clamped against the last page rather than centred blindly: near the end the window
+  // would otherwise run past it and come back short.
+  if (end > totalPages - 1) {
+    end = totalPages - 1;
+    start = end - window + 1;
+  }
 
   const items: (number | 'gap')[] = [1];
 
