@@ -24,6 +24,11 @@ type PagerProps = {
  * Numbered pagination flanked by icon-only prev/next arrows. Keeps the first and last
  * page plus the current one and its neighbours, eliding the rest with an ellipsis so
  * it stays one compact row.
+ *
+ * Drawn as a single joined group: one border and one radius around the outside, with
+ * the cells divided by hairlines rather than separated by gaps. The radius therefore
+ * belongs to the group, not the cells, which is why the arrows are square here and the
+ * rounded ends come from the container clipping them.
  */
 export function Pager({
   total,
@@ -62,7 +67,7 @@ export function Pager({
         {total === 1 ? '' : 's'}
       </Text>
 
-      <View className="flex-row items-center justify-center gap-1">
+      <View className="border-border bg-background flex-row items-center overflow-hidden rounded-xl border">
         <Arrow
           icon={CaretLeft}
           disabled={!canPrev}
@@ -74,9 +79,13 @@ export function Pager({
         {pageItems(current, pages).map((item, index) => {
           if (item === 'gap') {
             return (
-              <Text key={`gap-${index}`} variant="muted" className="w-5 text-center text-xs">
-                ...
-              </Text>
+              <View
+                key={`gap-${index}`}
+                className="border-border h-9 w-7 items-center justify-center border-l">
+                <Text variant="muted" className="text-xs">
+                  ...
+                </Text>
+              </View>
             );
           }
 
@@ -89,8 +98,8 @@ export function Pager({
               accessibilityState={{ selected }}
               onPress={() => goTo(item)}
               className={cn(
-                'border-border h-8 w-8 items-center justify-center rounded-md border',
-                selected ? 'bg-primary border-transparent' : 'bg-background'
+                'border-border h-9 w-9 items-center justify-center border-l',
+                selected && 'bg-primary'
               )}>
               <Text
                 className="text-xs font-medium"
@@ -107,6 +116,7 @@ export function Pager({
           color={canNext ? muted : disabledColor}
           onPress={() => goTo(current + 1)}
           label="Next page"
+          divided
         />
       </View>
 
@@ -144,12 +154,15 @@ function Arrow({
   color,
   onPress,
   label,
+  divided = false,
 }: {
   icon: typeof CaretLeft;
   disabled: boolean;
   color: string;
   onPress: () => void;
   label: string;
+  /** Draws the hairline shared with the cell before it. The leading arrow has none. */
+  divided?: boolean;
 }) {
   return (
     <Pressable
@@ -157,7 +170,10 @@ function Arrow({
       accessibilityLabel={label}
       disabled={disabled}
       onPress={onPress}
-      className="border-border bg-background h-8 w-8 items-center justify-center rounded-md border">
+      className={cn(
+        'h-9 w-10 items-center justify-center',
+        divided && 'border-border border-l'
+      )}>
       <Icon size={15} weight="bold" color={color} />
     </Pressable>
   );

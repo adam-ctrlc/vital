@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { ALERT_SOUNDS, soundFor, type AlertSoundName } from '@/features/notifications/alert-sound';
 import { request } from '@/lib/api-client';
 
 /** Expo Go dropped remote push in SDK 53+; a development build is required. */
@@ -32,14 +33,26 @@ export async function ensurePermission(): Promise<boolean> {
   // Android needs a channel before anything will surface, and `max` is what lets an
   // overload interrupt rather than sit silently in the tray.
   if (Platform.OS === 'android') {
-    // Android freezes a channel's settings once it exists, so a stronger vibration
-    // only takes effect under a fresh id; drop the old channel to keep the list clean.
-    await Notifications.setNotificationChannelAsync('alerts-v2', {
-      name: 'Transformer alerts',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 400, 200, 400, 200, 600],
-      lightColor: '#ef4444',
-    });
+    // One channel per tone, because Android copies a channel's sound in at creation and
+    // will not let it be changed afterwards. Registering all of them up front means
+    // switching tones is just a matter of posting through a different channel.
+    //
+    // They are created together rather than on demand so that the phone's own
+    // notification settings list every tone the app can use, which is where someone
+    // would go to override the choice made in here.
+    for (const sound of ALERT_SOUNDS) {
+      await Notifications.setNotificationChannelAsync(sound.channelId, {
+        name:
+          sound.value === 'default'
+            ? 'Transformer alerts'
+            : `Transformer alerts (${sound.label})`,
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 400, 200, 400, 200, 600],
+        lightColor: '#ef4444',
+        ...(sound.file ? { sound: sound.file } : {}),
+      });
+    }
+
     try {
       await Notifications.deleteNotificationChannelAsync('alerts');
     } catch {
@@ -103,13 +116,22 @@ export async function unregisterDevice(token: string): Promise<void> {
  * It only fires while the app is running, so it complements remote push rather than
  * replacing it.
  */
-export async function notifyLocally(title: string, body: string): Promise<void> {
+export async function notifyLocally(
+  title: string,
+  body: string,
+  sound: AlertSoundName = 'default'
+): Promise<void> {
   try {
     if (!(await ensurePermission())) return;
 
+    const chosen = soundFor(sound);
+
     await Notifications.scheduleNotificationAsync({
-      content: { title, body, sound: 'default' },
-      trigger: null,
+      content: { title, body, sound: chosen.file ?? 'default' },
+      // A channel id is the only way to pick the tone on Android, since the sound comes
+      // from the channel rather than the notification. Passing it as the trigger fires
+      // immediately, the same as a null trigger would.
+      trigger: Platform.OS === 'android' ? { channelId: chosen.channelId } : null,
     });
   } catch {
     // A missing banner is not worth surfacing an error over.

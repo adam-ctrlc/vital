@@ -4,7 +4,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use crate::alerts::model;
-use crate::alerts::model::Alert;
+use crate::alerts::model::{Alert, AlertWithReading};
 use crate::auth::extract::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::page::{Page, Paging};
@@ -44,7 +44,7 @@ async fn list(
     State(state): State<AppState>,
     _auth: AuthUser,
     Query(query): Query<ListQuery>,
-) -> AppResult<Json<Page<Alert>>> {
+) -> AppResult<Json<Page<AlertWithReading>>> {
     let (limit, offset) =
         Paging::new(query.limit, query.offset).resolve(DEFAULT_LIMIT, MAX_LIMIT);
     let kind = filter(query.kind);
@@ -70,14 +70,19 @@ async fn list(
     .fetch_one(&state.pool)
     .await?;
 
-    let rows = sqlx::query_as::<_, Alert>(
-        "select id, reading_id, kind, message, value, threshold, created_at,
-                acknowledged_at, acknowledged_by, response_ms
-         from alerts
-         where ($1 is false or acknowledged_at is null)
-           and ($2::text is null or kind = $2)
-           and ($3::text is null or message ilike '%' || $3 || '%' or kind ilike '%' || $3 || '%')
-         order by created_at desc
+    // Left joined, not inner: an alert whose reading has since been pruned must still
+    // be listed, just without the measurements.
+    let rows = sqlx::query_as::<_, AlertWithReading>(
+        "select a.id, a.reading_id, a.kind, a.message, a.value, a.threshold, a.created_at,
+                a.acknowledged_at, a.acknowledged_by, a.response_ms,
+                r.voltage_v, r.current_a, r.temperature_c, r.apparent_power_va,
+                r.power_w, r.power_factor, r.frequency_hz, r.energy_kwh
+         from alerts a
+         left join readings r on r.id = a.reading_id
+         where ($1 is false or a.acknowledged_at is null)
+           and ($2::text is null or a.kind = $2)
+           and ($3::text is null or a.message ilike '%' || $3 || '%' or a.kind ilike '%' || $3 || '%')
+         order by a.created_at desc
          limit $4 offset $5",
     )
     .bind(query.active)

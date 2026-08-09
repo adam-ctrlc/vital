@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
@@ -5,7 +7,28 @@ use crate::error::AppResult;
 
 /// Small on purpose: every serverless instance opens its own pool, and a pooled
 /// database counts each of those against one shared connection limit.
-const MAX_CONNECTIONS: u32 = 5;
+///
+/// The session pooler allows 15 clients in total. At five apiece, three warm instances
+/// were enough to take the whole budget, and every cold start after that failed to
+/// build with `EMAXCONNSESSION`, which turns into a 500 on every route including the
+/// ones that never touch the database.
+const MAX_CONNECTIONS: u32 = 2;
+
+/// How long an unused connection is kept before it is handed back.
+///
+/// This is the part that actually matters. A serverless instance stays warm long after
+/// it stops serving, and without a timeout it keeps its connections for that whole
+/// time: the budget is consumed by instances doing nothing. Releasing when idle is what
+/// lets a burst of traffic settle instead of locking the pool until the instances die.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A ceiling on any one connection's life, so a connection the pooler has quietly
+/// dropped cannot sit in the pool being handed out forever.
+const MAX_LIFETIME: Duration = Duration::from_secs(60);
+
+/// Fail rather than hang when the pool is genuinely saturated. Ten seconds is far
+/// longer than any query here, so reaching it means waiting will not help.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connects the pool.
 ///
@@ -20,6 +43,12 @@ const MAX_CONNECTIONS: u32 = 5;
 pub async fn connect(database_url: &str) -> AppResult<PgPool> {
     let pool = PgPoolOptions::new()
         .max_connections(MAX_CONNECTIONS)
+        // Nothing is held open just in case: an idle instance should cost the pooler
+        // nothing at all.
+        .min_connections(0)
+        .idle_timeout(IDLE_TIMEOUT)
+        .max_lifetime(MAX_LIFETIME)
+        .acquire_timeout(ACQUIRE_TIMEOUT)
         .connect(database_url)
         .await?;
 

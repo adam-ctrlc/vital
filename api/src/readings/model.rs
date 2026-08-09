@@ -93,6 +93,23 @@ impl ReadingInput {
             energy_kwh: None,
         }
     }
+
+    /// Whether this carries no measurement at all.
+    ///
+    /// A row of nothing but nulls is not a reading, it is a timestamp: it says the
+    /// board was talking without saying anything about the transformer. Stored, they
+    /// count toward `total`, occupy pages of the log, and drag every average in the
+    /// trend toward a value nobody measured.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.voltage_v.is_none()
+            && self.current_a.is_none()
+            && self.temperature_c.is_none()
+            && self.power_w.is_none()
+            && self.power_factor.is_none()
+            && self.frequency_hz.is_none()
+            && self.energy_kwh.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -170,4 +187,43 @@ pub struct TrendPoint {
     pub max_power_va: Option<f64>,
     pub avg_temperature_c: Option<f64>,
     pub samples: i64,
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::ReadingInput;
+
+    #[test]
+    fn an_input_with_nothing_in_it_is_empty() {
+        assert!(ReadingInput::empty().is_empty());
+    }
+
+    #[test]
+    fn a_single_measurement_is_enough() {
+        // The README documents this exact body: a board with only a probe still reports.
+        let probe_only = ReadingInput {
+            temperature_c: Some(31.5),
+            ..ReadingInput::empty()
+        };
+        assert!(!probe_only.is_empty());
+
+        // Every field on its own has to count, or a board reporting just that one would
+        // be silently dropped.
+        let energy_only = ReadingInput {
+            energy_kwh: Some(12.5),
+            ..ReadingInput::empty()
+        };
+        assert!(!energy_only.is_empty());
+    }
+
+    #[test]
+    fn a_zero_is_a_measurement_not_an_absence() {
+        // Zero amps is a real reading of an idle transformer. Treating it as nothing
+        // would drop exactly the samples that prove the load was off.
+        let idle = ReadingInput {
+            current_a: Some(0.0),
+            ..ReadingInput::empty()
+        };
+        assert!(!idle.is_empty());
+    }
 }

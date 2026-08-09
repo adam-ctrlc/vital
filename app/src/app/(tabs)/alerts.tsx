@@ -1,5 +1,7 @@
 import { useColorScheme } from 'nativewind';
 import Bell from 'phosphor-react-native/src/icons/Bell';
+import CheckCircle from 'phosphor-react-native/src/icons/CheckCircle';
+import WarningCircle from 'phosphor-react-native/src/icons/WarningCircle';
 import BellRinging from 'phosphor-react-native/src/icons/BellRinging';
 import FunnelSimple from 'phosphor-react-native/src/icons/FunnelSimple';
 import ListBullets from 'phosphor-react-native/src/icons/ListBullets';
@@ -29,13 +31,32 @@ import { usePoll } from '@/hooks/use-poll';
 import { useAppearance } from '@/lib/appearance';
 import { formatDateTime } from '@/lib/datetime';
 import { PAGE_SIZE, type Page } from '@/lib/pagination';
+import { formatValue, formatValueWithUnit } from '@/lib/reading-format';
 
 const POLL_MS = 2000;
 
-/** Matches `--primary-foreground`, which the appearance provider pins to white. */
-const ON_PRIMARY = '#ffffff';
 
 type PhosphorIcon = typeof Warning;
+
+/**
+ * One measurement from the reading that triggered an alert.
+ *
+ * A third of the width each, so the columns line up down the list rather than shifting
+ * with the length of whatever they happen to hold.
+ */
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <View className="w-1/3 px-1">
+      <Text variant="muted" className="text-[10px] uppercase">
+        {label}
+      </Text>
+      <Text className="text-xs font-medium">{value}</Text>
+    </View>
+  );
+}
+
+/** Matches `--primary-foreground`, which the appearance provider pins to white. */
+const ON_PRIMARY = '#ffffff';
 
 const KINDS: { label: string; value: AlertKind | null; icon: PhosphorIcon }[] = [
   { label: 'All kinds', value: null, icon: FunnelSimple },
@@ -57,7 +78,6 @@ export default function AlertsScreen() {
   const isDark = colorScheme === 'dark';
   const danger = isDark ? '#f87171' : '#dc2626';
   const muted = isDark ? '#a1a1aa' : '#71717a';
-  const onPrimary = ON_PRIMARY;
 
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState('');
@@ -120,9 +140,12 @@ export default function AlertsScreen() {
     setAckError(null);
     try {
       const updated = await alertsApi.acknowledge(token ?? '', id);
-      // Swap the acknowledged card in place and hold the list for a moment, so the
-      // "ACKNOWLEDGED" state is visible before the refetch removes it.
-      setFrozen((current) => (current ?? rows).map((a) => (a.id === id ? updated : a)));
+      // Merged, not replaced: the acknowledge response is the alert row on its own,
+      // without the joined reading, so overwriting would strip the measurements off the
+      // card at the moment it is being looked at.
+      setFrozen((current) =>
+        (current ?? rows).map((a) => (a.id === id ? { ...a, ...updated } : a))
+      );
 
       if (ackTimer.current) clearTimeout(ackTimer.current);
       ackTimer.current = setTimeout(() => {
@@ -164,23 +187,14 @@ export default function AlertsScreen() {
 
         <SearchField value={query} onChangeText={setQuery} placeholder="Search alerts..." />
 
-        <View className="flex-row items-center gap-2">
-          {KINDS.map((option) => {
-            const selected = kind === option.value;
-            const Icon = option.icon;
-            return (
-              <Button
-                key={option.label}
-                variant={selected ? 'default' : 'outline'}
-                size="sm"
-                className="flex-1 px-1"
-                onPress={() => setKind(option.value)}>
-                <Icon size={14} weight="bold" color={selected ? onPrimary : muted} />
-                <Text className="text-xs">{option.label}</Text>
-              </Button>
-            );
-          })}
-        </View>
+        <Segmented
+          options={KINDS}
+          value={kind}
+          onChange={setKind}
+          activeColor={primary.hex}
+          inactiveColor={muted}
+          fill
+        />
 
         {error ? <Text className="text-destructive text-sm">{error.message}</Text> : null}
         {ackError ? <Text className="text-destructive text-sm">{ackError}</Text> : null}
@@ -235,7 +249,14 @@ export default function AlertsScreen() {
                       {alert.kind}
                     </Text>
                   </View>
-                  <Badge variant={open ? 'destructive' : 'secondary'}>
+                  <Badge
+                    variant={open ? 'destructive' : 'secondary'}
+                    className="flex-row items-center gap-1">
+                    {open ? (
+                      <WarningCircle size={11} weight="fill" color={ON_PRIMARY} />
+                    ) : (
+                      <CheckCircle size={11} weight="fill" color={muted} />
+                    )}
                     <Text className="text-[10px]">{open ? 'ACTIVE' : 'ACKNOWLEDGED'}</Text>
                   </Badge>
                 </View>
@@ -253,6 +274,32 @@ export default function AlertsScreen() {
                   {alert.message}
                 </Text>
 
+                {/* What the transformer was doing when it crossed. The alert itself
+                    stores only the value and the threshold, so this is the reading it
+                    was raised from, joined server side. Absent once that reading has
+                    been pruned, which is why it is guarded rather than assumed. */}
+                {alert.readingId !== null && alert.voltageV !== undefined ? (
+                  <View className="border-border -mx-1 flex-row flex-wrap gap-y-2 border-t pt-2">
+                    <Metric label="Voltage" value={formatValueWithUnit(alert.voltageV, 1, 'V')} />
+                    <Metric label="Current" value={formatValueWithUnit(alert.currentA, 2, 'A')} />
+                    <Metric
+                      label="Apparent"
+                      value={formatValueWithUnit(alert.apparentPowerVa, 0, 'VA')}
+                    />
+                    <Metric label="Real power" value={formatValueWithUnit(alert.powerW, 0, 'W')} />
+                    <Metric label="Power factor" value={formatValue(alert.powerFactor, 2)} />
+                    <Metric
+                      label="Frequency"
+                      value={formatValueWithUnit(alert.frequencyHz, 2, 'Hz')}
+                    />
+                    <Metric label="Energy" value={formatValueWithUnit(alert.energyKwh, 4, 'kWh')} />
+                    <Metric
+                      label="Temp"
+                      value={formatValueWithUnit(alert.temperatureC, 1, '°C')}
+                    />
+                  </View>
+                ) : null}
+
                 <View className="flex-row items-center justify-between gap-2">
                   <Text variant="muted" className="flex-1 text-[10px]">
                     {open
@@ -265,6 +312,7 @@ export default function AlertsScreen() {
                       className="h-8"
                       disabled={busy === alert.id}
                       onPress={() => void acknowledge(alert.id)}>
+                      <CheckCircle size={14} weight="bold" color={ON_PRIMARY} />
                       <Text className="text-xs">
                         {busy === alert.id ? 'Acknowledging...' : 'Acknowledge'}
                       </Text>

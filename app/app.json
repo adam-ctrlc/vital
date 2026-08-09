@@ -41,9 +41,42 @@
         "expo-notifications",
         {
           "color": "#208AEF",
-          "defaultChannel": "alerts-v2"
+          "defaultChannel": "alerts-v2",
+          "sounds": [
+            "./assets/sounds/chirp.wav",
+            "./assets/sounds/alarm.wav",
+            "./assets/sounds/beep.wav",
+            "./assets/sounds/sweep.wav",
+            "./assets/sounds/pulse.wav",
+            "./assets/sounds/siren.wav",
+            "./assets/sounds/warble.wav",
+            "./assets/sounds/ping.wav",
+            "./assets/sounds/tritone.wav",
+            "./assets/sounds/descend.wav",
+            "./assets/sounds/klaxon.wav",
+            "./assets/sounds/trill.wav",
+            "./assets/sounds/strobe.wav",
+            "./assets/sounds/bell.wav",
+            "./assets/sounds/surge.wav",
+            "./assets/sounds/blip.wav",
+            "./assets/sounds/buzzer.wav",
+            "./assets/sounds/chatter.wav",
+            "./assets/sounds/chime.wav",
+            "./assets/sounds/dive.wav",
+            "./assets/sounds/drone.wav",
+            "./assets/sounds/echo.wav",
+            "./assets/sounds/glass.wav",
+            "./assets/sounds/heartbeat.wav",
+            "./assets/sounds/ladder.wav",
+            "./assets/sounds/march.wav",
+            "./assets/sounds/radar.wav",
+            "./assets/sounds/spark.wav",
+            "./assets/sounds/tick.wav",
+            "./assets/sounds/whoop.wav"
+          ]
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

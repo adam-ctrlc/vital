@@ -10,7 +10,7 @@ import { useCallback, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { MetricCard } from '@/components/ac/metric-card';
+import { TileRow } from '@/components/ui/tile-row';
 import { PowerPanel } from '@/components/ac/power-panel';
 import { AcWaveform } from '@/components/ac/waveform';
 import { AppearanceModal } from '@/components/appearance-modal';
@@ -58,24 +58,30 @@ export default function DashboardScreen() {
   // Recomputed each heartbeat, so the greeting rolls over with the clock.
   const { greeting, subtitle } = greet(user);
 
+  // The source and status badges sit side by side, so their height is pinned rather
+  // than left to each variant's intrinsic text height: outline draws a visible border
+  // where the filled variants draw a transparent one, and the two were not landing on
+  // the same total. A fixed height makes them match whatever the variant does.
+  const BADGE = 'h-6';
+
   function renderSourceBadge() {
     if (!data) return null;
     switch (true) {
       case data.simulated:
         return (
-          <Badge variant="secondary">
+          <Badge variant="secondary" className={BADGE}>
             <Text>Simulated</Text>
           </Badge>
         );
       case data.connected:
         return (
-          <Badge>
+          <Badge className={BADGE}>
             <Text>ESP32 live</Text>
           </Badge>
         );
       default:
         return (
-          <Badge variant="outline" className="opacity-60">
+          <Badge variant="outline" className={`${BADGE} opacity-60`}>
             <Text>ESP32 offline</Text>
           </Badge>
         );
@@ -147,7 +153,7 @@ export default function DashboardScreen() {
               <CardDescription>Status</CardDescription>
               <View className="flex-row items-center gap-1.5">
                 {renderSourceBadge()}
-                <Badge variant={overload ? 'destructive' : 'default'}>
+                <Badge variant={overload ? 'destructive' : 'default'} className={BADGE}>
                   <Text>{overload ? 'OVERLOAD' : 'NORMAL'}</Text>
                 </Badge>
               </View>
@@ -180,32 +186,36 @@ export default function DashboardScreen() {
           </CardContent>
         </Card>
 
-        <View className="flex-row gap-1.5">
-          <MetricCard
-            className="flex-1"
-            icon={PlugsConnected}
-            label="Current"
-            value={formatValue(data ? data.currentA : undefined, 2)}
-            unit="A"
-            iconColor={ac}
-          />
-          <MetricCard
-            className="flex-1"
-            icon={Lightning}
-            label="Voltage"
-            value={formatValue(data ? data.voltageV : undefined, 1)}
-            unit="V"
-            iconColor={ac}
-          />
-          <MetricCard
-            className="flex-1"
-            icon={Thermometer}
-            label="Temp"
-            value={formatValue(data ? data.temperatureC : undefined, 1)}
-            unit="°C"
-            iconColor={hot ? danger : ac}
-          />
-        </View>
+        <TileRow
+          tiles={[
+            {
+              icon: PlugsConnected,
+              label: 'Current',
+              value: formatValue(data ? data.currentA : undefined, 2),
+              unit: 'A',
+              hint: 'Line draw',
+              iconColor: ac,
+            },
+            {
+              icon: Lightning,
+              label: 'Voltage',
+              value: formatValue(data ? data.voltageV : undefined, 1),
+              unit: 'V',
+              hint: 'Supply',
+              iconColor: ac,
+            },
+            {
+              icon: Thermometer,
+              label: 'Temperature',
+              value: formatValue(data ? data.temperatureC : undefined, 1),
+              unit: '°C',
+              // The limit rather than a label: a temperature means little without the
+              // number it is judged against, and that number is adjustable.
+              hint: data ? `Limit ${data.tempThresholdC} °C` : undefined,
+              iconColor: hot ? danger : ac,
+            },
+          ]}
+        />
 
         {hot ? (
           <View

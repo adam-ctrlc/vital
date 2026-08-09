@@ -98,7 +98,10 @@ export function PowerPanel({ data, accent }: PowerPanelProps) {
           />
           <Stat
             label="Energy"
-            value={formatValue(data ? data.energyKwh : undefined, 1)}
+            // Four decimals. The meter itself resolves three, so the last digit only
+            // carries anything in simulator mode, but a coarser format left a kilowatt
+            // of load sitting on 0.0 for minutes and reading as a broken sensor.
+            value={formatValue(data ? data.energyKwh : undefined, 4)}
             unit="kWh"
             hint="Meter total"
           />

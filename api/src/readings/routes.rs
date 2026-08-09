@@ -95,14 +95,9 @@ async fn ingest(
     _device: DeviceAuth,
     Json(body): Json<ReadingInput>,
 ) -> AppResult<Json<Reading>> {
-    let empty = body.voltage_v.is_none()
-        && body.current_a.is_none()
-        && body.temperature_c.is_none()
-        && body.power_w.is_none()
-        && body.power_factor.is_none()
-        && body.frequency_hz.is_none()
-        && body.energy_kwh.is_none();
-    if empty {
+    // Rejected here as well as in the service, so a board sending nothing gets a clear
+    // 400 without a round trip to the database.
+    if body.is_empty() {
         return Err(AppError::BadRequest(
             "at least one measurement is required".to_owned(),
         ));

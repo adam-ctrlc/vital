@@ -2,7 +2,9 @@ import { Redirect } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import ArrowsClockwise from 'phosphor-react-native/src/icons/ArrowsClockwise';
 import ChartLine from 'phosphor-react-native/src/icons/ChartLine';
+import Lightning from 'phosphor-react-native/src/icons/Lightning';
 import MagnifyingGlass from 'phosphor-react-native/src/icons/MagnifyingGlass';
+import Thermometer from 'phosphor-react-native/src/icons/Thermometer';
 import Warning from 'phosphor-react-native/src/icons/Warning';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, ScrollView, View } from 'react-native';
@@ -18,11 +20,14 @@ import { Pager } from '@/components/ui/pager';
 import { SearchField } from '@/components/ui/search-field';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
+import { TileRow } from '@/components/ui/tile-row';
+import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
 import { useAuth } from '@/features/auth/context';
 import { useNotifications } from '@/features/notifications/context';
 import * as readingsApi from '@/features/readings/api';
 import * as settingsApi from '@/features/settings/api';
+import type { Settings } from '@/features/settings/types';
 import type { Reading, TrendPoint } from '@/features/readings/types';
 import { useDebounced } from '@/hooks/use-debounced';
 import { useAppearance } from '@/lib/appearance';
@@ -38,9 +43,6 @@ const AXIS_HEIGHT = 16;
 /** Room above the tallest bar for its value label. */
 const LABEL_HEIGHT = 14;
 
-/** Matches `--primary-foreground`, which the appearance provider pins to white. */
-const ON_PRIMARY = '#ffffff';
-
 type SourceFilter = 'hardware' | 'simulator' | null;
 
 const SOURCE_FILTERS: { label: string; value: SourceFilter }[] = [
@@ -48,6 +50,23 @@ const SOURCE_FILTERS: { label: string; value: SourceFilter }[] = [
   { label: 'Hardware', value: 'hardware' },
   { label: 'Simulator', value: 'simulator' },
 ];
+
+/**
+ * One measurement in a log row.
+ *
+ * A third of the width each, so the columns line up down the list rather than
+ * shifting with the length of whatever they happen to hold.
+ */
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <View className="w-1/3 px-1">
+      <Text variant="muted" className="text-[10px] uppercase">
+        {label}
+      </Text>
+      <Text className="text-xs font-medium">{value}</Text>
+    </View>
+  );
+}
 
 /**
  * Caption under the chart. Days whose readings carried no power at all have a null
@@ -201,18 +220,21 @@ export default function LogsScreen() {
   const [source, setSource] = useState<SourceFilter>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [threshold, setThreshold] = useState<number | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const threshold = settings?.loadThresholdVa ?? null;
 
   const scroller = useRef<ScrollView>(null);
   const debouncedQuery = useDebounced(query);
 
-  // The bars are only meaningful against the limit they are judged by.
+  // The bars are only meaningful against the limit they are judged by, and the same
+  // limits are worth stating outright: a log full of OVERLOAD rows says nothing without
+  // the number they were judged against, which is adjustable in Settings.
   useEffect(() => {
     if (!token) return;
 
     settingsApi
       .read(token)
-      .then((current) => setThreshold(current.loadThresholdVa))
+      .then(setSettings)
       .catch(() => undefined);
   }, [token]);
 
@@ -317,14 +339,51 @@ export default function LogsScreen() {
           fill
         />
 
+        {/* The limits these rows were judged against. A log full of OVERLOAD says
+            nothing without them, and they are adjustable in Settings. */}
+        {settings ? (
+          <TileRow
+            tiles={[
+              {
+                icon: Warning,
+                label: 'Alarm',
+                value: String(settings.loadThresholdVa),
+                unit: 'VA',
+                hint: 'Raises an alert',
+                iconColor: ac,
+              },
+              {
+                icon: Lightning,
+                label: 'Trip',
+                value: String(settings.tripThresholdVa),
+                unit: 'VA',
+                hint: 'Opens the relay',
+                iconColor: danger,
+              },
+              {
+                icon: Thermometer,
+                label: 'Temperature',
+                value: String(settings.tempThresholdC),
+                unit: '°C',
+                hint: 'Overheat limit',
+                iconColor: danger,
+              },
+            ]}
+          />
+        ) : null}
+
+        {/* A switch rather than a button: it is a state that stays on, and the button
+            had to rename itself to say which state it was in. On its own row so the
+            control sits beside its label rather than being squeezed between the refresh
+            button and the count. Kept next to the text, not pushed to the far edge, so
+            the two read as one control. */}
+        <View className="flex-row items-center gap-3">
+          <Warning size={16} weight="bold" color={onlyOverload ? ac : muted} />
+          <Text className="text-sm font-medium">Overloads only</Text>
+          <Switch size="lg" checked={onlyOverload} onCheckedChange={setOnlyOverload} />
+        </View>
+
         <View className="flex-row items-center gap-2">
-          <Button
-            variant={onlyOverload ? 'default' : 'outline'}
-            size="sm"
-            onPress={() => setOnlyOverload((v) => !v)}>
-            <Warning size={14} weight="bold" color={onlyOverload ? ON_PRIMARY : muted} />
-            <Text>{onlyOverload ? 'Showing overloads' : 'Overloads only'}</Text>
-          </Button>
           <Button variant="outline" size="sm" onPress={() => void refresh()}>
             <ArrowsClockwise size={14} weight="bold" color={muted} />
             <Text>Refresh</Text>
@@ -377,31 +436,23 @@ export default function LogsScreen() {
                       </Text>
                     </View>
 
-                    <View className="flex-row gap-4">
-                      <View>
-                        <Text variant="muted" className="text-[10px] uppercase">
-                          Voltage
-                        </Text>
-                        <Text className="text-xs font-medium">
-                          {formatValueWithUnit(row.voltageV, 1, 'V')}
-                        </Text>
-                      </View>
-                      <View>
-                        <Text variant="muted" className="text-[10px] uppercase">
-                          Current
-                        </Text>
-                        <Text className="text-xs font-medium">
-                          {formatValueWithUnit(row.currentA, 2, 'A')}
-                        </Text>
-                      </View>
-                      <View>
-                        <Text variant="muted" className="text-[10px] uppercase">
-                          Temp
-                        </Text>
-                        <Text className="text-xs font-medium">
-                          {formatValueWithUnit(row.temperatureC, 1, '°C')}
-                        </Text>
-                      </View>
+                    {/* Everything the record carries. A stored reading holds the meter
+                        fields too, and leaving them out made the log look like it had
+                        dropped data it was in fact holding. */}
+                    <View className="-mx-1 flex-row flex-wrap gap-y-2">
+                      <Metric label="Voltage" value={formatValueWithUnit(row.voltageV, 1, 'V')} />
+                      <Metric label="Current" value={formatValueWithUnit(row.currentA, 2, 'A')} />
+                      <Metric label="Real power" value={formatValueWithUnit(row.powerW, 0, 'W')} />
+                      <Metric label="Power factor" value={formatValue(row.powerFactor, 2)} />
+                      <Metric
+                        label="Frequency"
+                        value={formatValueWithUnit(row.frequencyHz, 2, 'Hz')}
+                      />
+                      <Metric label="Energy" value={formatValueWithUnit(row.energyKwh, 4, 'kWh')} />
+                      <Metric
+                        label="Temp"
+                        value={formatValueWithUnit(row.temperatureC, 1, '°C')}
+                      />
                     </View>
 
                     <View className="flex-row items-center gap-2">

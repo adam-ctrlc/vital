@@ -1,13 +1,21 @@
 import { useColorScheme } from 'nativewind';
+import Moon from 'phosphor-react-native/src/icons/Moon';
+import Sun from 'phosphor-react-native/src/icons/Sun';
 import { memo, useState, type ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Button } from '@/components/ui/button';
+import { Segmented } from '@/components/ui/segmented';
 import { Text } from '@/components/ui/text';
 import { AC_COLORS, ACCENTS, BACKGROUNDS, PRESETS, useAppearance, type Preset } from '@/lib/appearance';
 import { cn } from '@/lib/utils';
+
+const THEMES = [
+  { value: 'light' as const, label: 'Light', icon: Sun },
+  { value: 'dark' as const, label: 'Dark', icon: Moon },
+];
 
 // Memoised, and the comparison ignores onPress: a fresh onPress closure every render
 // would otherwise defeat memo, and the closure only ever calls a stable setter with a
@@ -94,11 +102,37 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export function AppearanceModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const { primary, accent, background, setPrimary, setAccent, setBackground, applyPreset, reset } =
-    useAppearance();
+  const {
+    primary,
+    accent,
+    background,
+    setPrimary,
+    setAccent,
+    setBackground,
+    applyPreset,
+    reset,
+    theme,
+    setTheme,
+  } = useAppearance();
 
   return (
     <BottomSheet visible={visible} title="Appearance" onClose={onClose}>
+      {/* First, because everything below it is drawn differently depending on this:
+          the background swatches and the preset previews both switch with the theme. */}
+      <View className="gap-2">
+        <Text variant="muted" className="text-xs uppercase tracking-wide">
+          Theme
+        </Text>
+        <Segmented
+          options={THEMES}
+          value={theme}
+          onChange={setTheme}
+          activeColor={primary.hex}
+          inactiveColor={isDark ? '#a1a1aa' : '#71717a'}
+          fill
+        />
+      </View>
+
       <View className="gap-2">
         <Text variant="muted" className="text-xs uppercase tracking-wide">
           Presets

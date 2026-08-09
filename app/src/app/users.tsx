@@ -449,23 +449,14 @@ export default function UsersScreen() {
 
         <SearchField value={query} onChangeText={setQuery} placeholder="Search accounts..." />
 
-        <View className="flex-row items-center gap-2">
-          {ROLE_FILTERS.map((option) => {
-            const selected = roleFilter === option.value;
-            const Icon = option.icon;
-            return (
-              <Button
-                key={option.label}
-                variant={selected ? 'default' : 'outline'}
-                size="sm"
-                className="flex-1 px-1"
-                onPress={() => setRoleFilter(option.value)}>
-                <Icon size={14} weight="bold" color={selected ? ON_PRIMARY : muted} />
-                <Text className="text-xs">{option.label}</Text>
-              </Button>
-            );
-          })}
-        </View>
+        <Segmented
+          options={ROLE_FILTERS}
+          value={roleFilter}
+          onChange={setRoleFilter}
+          activeColor={primary.hex}
+          inactiveColor={muted}
+          fill
+        />
 
         {loading ? (
           <Skeleton className="h-3 w-24" />

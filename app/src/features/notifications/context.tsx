@@ -8,10 +8,36 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { Platform, Vibration } from 'react-native';
 
 import * as alertsApi from '@/features/alerts/api';
 import { useAuth } from '@/features/auth/context';
+import {
+  DEFAULT_SECONDS,
+  loadAlertSeconds,
+  saveAlertSeconds,
+} from '@/features/notifications/alert-length';
+import {
+  clearCustomSound,
+  loadCustomSound,
+  pickCustomSound,
+  type CustomSound,
+} from '@/features/notifications/custom-sound';
+import {
+  DEFAULT_SOUND,
+  loadAlertSound,
+  saveAlertSound,
+  soundFor,
+  type AlertSoundName,
+} from '@/features/notifications/alert-sound';
+import {
+  DEFAULT_PATTERN,
+  loadAlertPattern,
+  pulseFor,
+  saveAlertPattern,
+  type AlertPatternName,
+} from '@/features/notifications/alert-pattern';
 import { loadEnabled, saveEnabled } from '@/features/notifications/preference';
 import {
   ensurePermission,
@@ -40,6 +66,24 @@ type NotificationsValue = {
    * silently springs back.
    */
   setNotificationsEnabled: (next: boolean) => Promise<boolean>;
+  /** How long the phone buzzes for an alert, in seconds. */
+  alertSeconds: number;
+  setAlertSeconds: (seconds: number) => void;
+  /** Which buzz shape an alert uses. */
+  alertPattern: AlertPatternName;
+  setAlertPattern: (name: AlertPatternName) => void;
+  /** Which bundled tone an alert plays. Works with the app closed. */
+  alertSound: AlertSoundName;
+  setAlertSound: (name: AlertSoundName) => void;
+  /** The chosen sound file, or null when none has been picked. */
+  customSound: CustomSound | null;
+  /** Opens the file picker. Returns false only on a real failure, not a dismissal. */
+  chooseCustomSound: () => Promise<boolean>;
+  removeCustomSound: () => Promise<void>;
+  /** True while the preview is buzzing, so the button can offer to stop it. */
+  previewing: boolean;
+  /** Plays the chosen pattern for the chosen length, or stops one already playing. */
+  togglePreview: () => void;
 };
 
 const NotificationsContext = createContext<NotificationsValue>({
@@ -48,6 +92,17 @@ const NotificationsContext = createContext<NotificationsValue>({
   markLogsSeen: () => undefined,
   notificationsEnabled: true,
   setNotificationsEnabled: async () => true,
+  alertSeconds: DEFAULT_SECONDS,
+  setAlertSeconds: () => undefined,
+  alertPattern: DEFAULT_PATTERN,
+  setAlertPattern: () => undefined,
+  alertSound: DEFAULT_SOUND,
+  setAlertSound: () => undefined,
+  customSound: null,
+  chooseCustomSound: async () => false,
+  removeCustomSound: async () => undefined,
+  previewing: false,
+  togglePreview: () => undefined,
 });
 
 export function useNotifications() {
@@ -69,6 +124,142 @@ export function NotificationsProvider({
   /** Null until the first poll, so opening the app never announces old alerts. */
   const lastCount = useRef<number | null>(null);
 
+  /** Pending stop for the current buzz, so a new alert restarts rather than stacks. */
+  const buzzStop = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Bumped by every start and every stop, to identify which buzz a callback belongs to.
+   *
+   * The player is created asynchronously, so a stop can land in the gap between asking
+   * for one and getting it. Without this the stop finds nothing to release, and the
+   * player it was meant to kill is created a moment later and loops forever with no
+   * reference left to stop it. Tapping quickly stacks up several of those at once.
+   */
+  const generation = useRef(0);
+
+  /**
+   * Buzzes for `seconds` by repeating the pulse and cancelling on a timer.
+   *
+   * Repeat-and-cancel rather than one long pattern: at five minutes the array would be
+   * a thousand entries, and Android limits how long a pattern it will take.
+   */
+  const releasePlayer = useCallback(() => {
+    const current = player.current;
+    // Cleared first, so anything reaching for the player mid-teardown finds nothing
+    // rather than a half-released one.
+    player.current = null;
+    if (!current) return;
+
+    // Stopped before it is released, and in its own try. Releasing a player does not
+    // reliably halt what it is already playing, and a looping one carries on with its
+    // handle gone and nothing left to stop it. Clearing the loop first stops it
+    // restarting in the gap between the pause and the release.
+    try {
+      current.loop = false;
+      current.pause();
+    } catch {
+      // Already stopped, or gone. The release below is what actually matters.
+    }
+
+    try {
+      current.remove();
+    } catch {
+      // Already released. Nothing to do, and nothing worth reporting.
+    }
+  }, []);
+
+  const buzz = useCallback(
+    (seconds: number, name: AlertPatternName) => {
+      if (buzzStop.current) clearTimeout(buzzStop.current);
+      releasePlayer();
+
+      const current = ++generation.current;
+
+      Vibration.vibrate(pulseFor(name), true);
+
+      // An uploaded file wins over a bundled tone: someone who went to the trouble of
+      // choosing their own meant it. Either way the app plays the sound itself here,
+      // because a notification channel only makes noise when the app is not in front.
+      //
+      // It loops so a short clip fills the whole alert rather than playing once into
+      // silence.
+      const custom = customSoundRef.current;
+      const bundled = soundFor(alertSoundRef.current).asset;
+      const source = custom ? { uri: custom.uri } : bundled;
+
+      if (source) {
+        void setAudioModeAsync({ playsInSilentMode: true })
+          .catch(() => undefined)
+          .then(() => {
+            const created = createAudioPlayer(source);
+
+            // Stopped while this was being set up, so it is already unwanted. Released
+            // rather than assigned: assigning would leave it playing under a state that
+            // says nothing is.
+            if (generation.current !== current) {
+              created.remove();
+              return;
+            }
+
+            created.loop = true;
+            created.play();
+            player.current = created;
+          })
+          .catch(() => {
+            // A sound that will not play must not take the vibration down with it.
+          });
+      }
+
+      buzzStop.current = setTimeout(() => {
+        if (generation.current !== current) return;
+
+        generation.current += 1;
+        Vibration.cancel();
+        releasePlayer();
+        buzzStop.current = null;
+        setPreviewing(false);
+      }, seconds * 1000);
+    },
+    [releasePlayer]
+  );
+
+  const stopBuzz = useCallback(() => {
+    if (buzzStop.current) clearTimeout(buzzStop.current);
+    buzzStop.current = null;
+    // Invalidates any player still being created, so it releases itself on arrival.
+    generation.current += 1;
+    Vibration.cancel();
+    releasePlayer();
+    setPreviewing(false);
+  }, [releasePlayer]);
+
+  // A repeating vibration outlives the component that started it, so it has to be
+  // stopped explicitly rather than left to the timer that may never fire.
+  useEffect(
+    () => () => {
+      if (buzzStop.current) clearTimeout(buzzStop.current);
+      generation.current += 1;
+      Vibration.cancel();
+      releasePlayer();
+    },
+    [releasePlayer]
+  );
+
+  const [alertPattern, setAlertPatternState] = useState<AlertPatternName>(DEFAULT_PATTERN);
+  const alertPatternRef = useRef<AlertPatternName>(DEFAULT_PATTERN);
+  const [previewing, setPreviewing] = useState(false);
+  const [customSound, setCustomSound] = useState<CustomSound | null>(null);
+  const customSoundRef = useRef<CustomSound | null>(null);
+  const [alertSound, setAlertSoundState] = useState<AlertSoundName>(DEFAULT_SOUND);
+  const alertSoundRef = useRef<AlertSoundName>(DEFAULT_SOUND);
+  /** The player for the current buzz, held so it can be stopped and released. */
+  const player = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+
+  const [alertSeconds, setAlertSecondsState] = useState(DEFAULT_SECONDS);
+  // Read through a ref for the same reason as `enabled`: the polling effect closes over
+  // it and should not be torn down every time the slider moves.
+  const alertSecondsRef = useRef(DEFAULT_SECONDS);
+
   const [enabled, setEnabled] = useState(true);
   // Read in a ref as well, because the polling effect below closes over it and should
   // not be torn down and restarted just because the switch moved.
@@ -81,6 +272,30 @@ export function NotificationsProvider({
       if (!active) return;
       setEnabled(stored);
       enabledRef.current = stored;
+    });
+
+    void loadAlertSeconds().then((stored) => {
+      if (!active) return;
+      setAlertSecondsState(stored);
+      alertSecondsRef.current = stored;
+    });
+
+    void loadAlertPattern().then((stored) => {
+      if (!active) return;
+      setAlertPatternState(stored);
+      alertPatternRef.current = stored;
+    });
+
+    void loadAlertSound().then((stored) => {
+      if (!active) return;
+      setAlertSoundState(stored);
+      alertSoundRef.current = stored;
+    });
+
+    void loadCustomSound().then((stored) => {
+      if (!active) return;
+      setCustomSound(stored);
+      customSoundRef.current = stored;
     });
 
     return () => {
@@ -113,12 +328,13 @@ export function NotificationsProvider({
         // things that interrupt, the buzz and the banner, are held back.
         if (lastCount.current !== null && count > lastCount.current && enabledRef.current) {
           const raised = count - lastCount.current;
-          if (Platform.OS !== 'web') Vibration.vibrate([0, 400, 200, 400, 200, 600]);
+          if (Platform.OS !== 'web') buzz(alertSecondsRef.current, alertPatternRef.current);
           void notifyLocally(
             raised === 1 ? 'Transformer alert' : `${raised} transformer alerts`,
             raised === 1
-              ? 'A reading crossed a threshold. Open VITAL to acknowledge it.'
-              : 'Readings crossed the thresholds. Open VITAL to acknowledge them.'
+              ? 'A reading crossed a threshold. Open Vital to acknowledge it.'
+              : 'Readings crossed the thresholds. Open Vital to acknowledge them.',
+            alertSoundRef.current
           );
         }
         lastCount.current = count;
@@ -157,6 +373,61 @@ export function NotificationsProvider({
     setSeenOverloads(overloadTotal ?? 0);
   }, [overloadTotal]);
 
+  const setAlertSeconds = useCallback((seconds: number) => {
+    setAlertSecondsState(seconds);
+    alertSecondsRef.current = seconds;
+    void saveAlertSeconds(seconds);
+  }, []);
+
+  const setAlertSound = useCallback((name: AlertSoundName) => {
+    setAlertSoundState(name);
+    alertSoundRef.current = name;
+    void saveAlertSound(name);
+  }, []);
+
+  const setAlertPattern = useCallback((name: AlertPatternName) => {
+    setAlertPatternState(name);
+    alertPatternRef.current = name;
+    void saveAlertPattern(name);
+  }, []);
+
+  /**
+   * Plays exactly what a real alert would: same pattern, same length, same driver.
+   *
+   * Stoppable, because the length goes up to five minutes and nobody wants to wait
+   * that out to hear what they picked.
+   */
+  const togglePreview = useCallback(() => {
+    if (previewing) {
+      stopBuzz();
+      return;
+    }
+    if (Platform.OS === 'web') return;
+
+    setPreviewing(true);
+    buzz(alertSecondsRef.current, alertPatternRef.current);
+  }, [previewing, stopBuzz, buzz]);
+
+  const chooseCustomSound = useCallback(async () => {
+    try {
+      const picked = await pickCustomSound();
+      // Null means the picker was dismissed, which is not a failure.
+      if (!picked) return true;
+
+      setCustomSound(picked);
+      customSoundRef.current = picked;
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const removeCustomSound = useCallback(async () => {
+    setCustomSound(null);
+    customSoundRef.current = null;
+    await clearCustomSound();
+  }, []);
+
   const setNotificationsEnabled = useCallback(
     async (next: boolean) => {
       if (next) {
@@ -194,8 +465,36 @@ export function NotificationsProvider({
       markLogsSeen,
       notificationsEnabled: enabled,
       setNotificationsEnabled,
+      alertSeconds,
+      setAlertSeconds,
+      alertPattern,
+      setAlertPattern,
+      alertSound,
+      setAlertSound,
+      customSound,
+      chooseCustomSound,
+      removeCustomSound,
+      previewing,
+      togglePreview,
     }),
-    [activeAlerts, newOverloads, markLogsSeen, enabled, setNotificationsEnabled]
+    [
+      activeAlerts,
+      newOverloads,
+      markLogsSeen,
+      enabled,
+      setNotificationsEnabled,
+      alertSeconds,
+      setAlertSeconds,
+      alertPattern,
+      setAlertPattern,
+      alertSound,
+      setAlertSound,
+      customSound,
+      chooseCustomSound,
+      removeCustomSound,
+      previewing,
+      togglePreview,
+    ]
   );
 
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;

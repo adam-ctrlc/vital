@@ -1,23 +1,35 @@
+import Slider from '@react-native-community/slider';
 import { useColorScheme } from 'nativewind';
 import At from 'phosphor-react-native/src/icons/At';
 import BellRinging from 'phosphor-react-native/src/icons/BellRinging';
+import CaretDown from 'phosphor-react-native/src/icons/CaretDown';
 import Check from 'phosphor-react-native/src/icons/Check';
 import Envelope from 'phosphor-react-native/src/icons/Envelope';
 import Eye from 'phosphor-react-native/src/icons/Eye';
 import EyeSlash from 'phosphor-react-native/src/icons/EyeSlash';
 import IdentificationCard from 'phosphor-react-native/src/icons/IdentificationCard';
 import Lock from 'phosphor-react-native/src/icons/Lock';
+import MusicNote from 'phosphor-react-native/src/icons/MusicNote';
 import Palette from 'phosphor-react-native/src/icons/Palette';
 import PencilSimple from 'phosphor-react-native/src/icons/PencilSimple';
 import ShieldCheck from 'phosphor-react-native/src/icons/ShieldCheck';
 import SignOut from 'phosphor-react-native/src/icons/SignOut';
 import UserCircle from 'phosphor-react-native/src/icons/UserCircle';
 import X from 'phosphor-react-native/src/icons/X';
-import { useState } from 'react';
-import { KeyboardAvoidingView, Linking, ScrollView, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createAudioPlayer } from 'expo-audio';
+import {
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  ScrollView,
+  Vibration,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppearanceModal } from '@/components/appearance-modal';
+import { BottomSheet } from '@/components/bottom-sheet';
 import { ConfirmModal } from '@/components/confirm-modal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -28,6 +40,19 @@ import { Text } from '@/components/ui/text';
 import * as authApi from '@/features/auth/api';
 import { useAuth } from '@/features/auth/context';
 import type { Role, User } from '@/features/auth/types';
+import {
+  MAX_SECONDS,
+  MIN_SECONDS,
+  STEPS,
+  STEP_SECONDS,
+  formatDuration,
+} from '@/features/notifications/alert-length';
+import {
+  ALERT_PATTERNS,
+  pulseFor,
+  type AlertPatternName,
+} from '@/features/notifications/alert-pattern';
+import { ALERT_SOUNDS, soundFor } from '@/features/notifications/alert-sound';
 import { useNotifications } from '@/features/notifications/context';
 import { useAppearance } from '@/lib/appearance';
 
@@ -224,13 +249,133 @@ export default function ProfileScreen() {
   const { primary } = useAppearance();
   const { colorScheme } = useColorScheme();
   const danger = colorScheme === 'dark' ? '#f87171' : '#dc2626';
+  const muted = colorScheme === 'dark' ? '#a1a1aa' : '#71717a';
+  const fg = colorScheme === 'dark' ? '#fafafa' : '#0a0a0a';
 
-  const { notificationsEnabled, setNotificationsEnabled } = useNotifications();
+  const {
+    notificationsEnabled,
+    setNotificationsEnabled,
+    alertSeconds,
+    setAlertSeconds,
+    alertPattern,
+    setAlertPattern,
+    alertSound,
+    setAlertSound,
+    customSound,
+    chooseCustomSound,
+    removeCustomSound,
+    previewing,
+    togglePreview,
+  } = useNotifications();
+  const [showStyles, setShowStyles] = useState(false);
+  const [showSounds, setShowSounds] = useState(false);
+  const [pickingSound, setPickingSound] = useState(false);
+  // The live value while a drag is in progress. Null when the thumb is not held, so
+  // the readout falls back to what is actually stored.
+  const [dragSeconds, setDragSeconds] = useState<number | null>(null);
+
+  /**
+   * Plays one tone once, so a choice can be heard before it is committed.
+   *
+   * Its own player rather than the context's: that one loops for the whole alert
+   * length, which is not what tapping down a list wants.
+   */
+  const sample = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+
+  const releaseSample = useCallback(() => {
+    Vibration.cancel();
+
+    const current = sample.current;
+    sample.current = null;
+    if (!current) return;
+
+    // Same as the preview player: releasing one does not reliably stop it, and the
+    // style sample loops, so it has to be halted before it is let go.
+    try {
+      current.loop = false;
+      current.pause();
+    } catch {
+      // Already stopped, or gone. The release below is what actually matters.
+    }
+
+    try {
+      current.remove();
+    } catch {
+      // Already released. Nothing to do, and nothing worth reporting.
+    }
+  }, []);
+
+  const audition = useCallback(
+    (asset: number | null, loop = false) => {
+      releaseSample();
+      // Only one thing makes noise at a time. The full preview and these samples are
+      // separate players, so without this they would talk over each other and stopping
+      // one would leave the other going.
+      if (previewing) togglePreview();
+      if (asset === null || Platform.OS === 'web') return;
+
+      try {
+        const created = createAudioPlayer(asset);
+        created.loop = loop;
+        created.play();
+        sample.current = created;
+      } catch {
+        // Hearing the sample is a convenience; failing at it should change nothing.
+      }
+    },
+    [releaseSample, previewing, togglePreview]
+  );
+
+  /**
+   * Samples a buzz shape together with the tone that is currently chosen.
+   *
+   * Both halves, because that is what an alert actually is. Picking a pattern in
+   * silence tells you how it feels but not how it lands, and the two interact: a
+   * long buzz under a short tone reads very differently from the reverse.
+   *
+   * Both repeat, so two shapes can be held against each other rather than remembered.
+   * It runs until another row is tapped or the sheet is closed, which is what makes
+   * comparing possible; a sample that stops on its own has to be retriggered every
+   * time attention moves.
+   */
+  const auditionStyle = useCallback(
+    (name: AlertPatternName) => {
+      if (Platform.OS === 'web') return;
+
+      // Sound first, and only then the buzz. Starting the tone is what tears down a
+      // running preview, and that teardown cancels the vibrator; buzzing first would
+      // just have it silenced a line later.
+      audition(soundFor(alertSound).asset, true);
+      Vibration.vibrate(pulseFor(name), true);
+    },
+    [releaseSample, audition, alertSound]
+  );
+
+  // The sheet can be dismissed mid-sample, and an unreleased player leaks.
+  useEffect(() => releaseSample, [releaseSample]);
+
+  async function chooseSound() {
+    setPickingSound(true);
+    try {
+      const ok = await chooseCustomSound();
+      setNotificationsError(ok ? null : 'Could not read that file. Try another one.');
+    } finally {
+      setPickingSound(false);
+    }
+  }
+
+
+  const selectedStyle = ALERT_PATTERNS.find((pattern) => pattern.value === alertPattern);
+  const selectedSound = ALERT_SOUNDS.find((sound) => sound.value === alertSound);
+  const StyleIcon = selectedStyle?.icon;
+  const SoundIcon = selectedSound?.icon;
+
   const [togglingNotifications, setTogglingNotifications] = useState(false);
   // Set when the user asks for notifications and the OS refuses. Only the system
   // settings can undo that, so the card says so rather than letting the switch snap
   // back with no explanation.
   const [notificationsBlocked, setNotificationsBlocked] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
   async function toggleNotifications(next: boolean) {
     setTogglingNotifications(true);
@@ -471,6 +616,168 @@ export default function ProfileScreen() {
               />
             </View>
 
+            <View className="border-border gap-2 border-t pt-3">
+              <Text className="text-sm font-medium">Alert style</Text>
+              <Button
+                variant="outline"
+                className="h-11 flex-row items-center justify-between"
+                disabled={!notificationsEnabled}
+                onPress={() => setShowStyles(true)}>
+                <View className="flex-row items-center gap-2">
+                  {StyleIcon ? <StyleIcon size={16} weight="bold" color={primary.hex} /> : null}
+                  <Text>{selectedStyle?.label}</Text>
+                </View>
+                <CaretDown size={14} weight="bold" color={muted} />
+              </Button>
+              <Text variant="muted" className="text-xs leading-4">
+                {selectedStyle?.description}
+              </Text>
+            </View>
+
+            <View className="border-border gap-2 border-t pt-3">
+              <Text className="text-sm font-medium">Alert sound</Text>
+              <Button
+                variant="outline"
+                className="h-11 flex-row items-center justify-between"
+                disabled={!notificationsEnabled}
+                onPress={() => setShowSounds(true)}>
+                <View className="flex-row items-center gap-2">
+                  {SoundIcon ? <SoundIcon size={16} weight="bold" color={primary.hex} /> : null}
+                  <Text>{selectedSound?.label}</Text>
+                </View>
+                <CaretDown size={14} weight="bold" color={muted} />
+              </Button>
+              <Text variant="muted" className="text-xs leading-4">
+                {selectedSound?.description} Plays even when Vital is closed.
+              </Text>
+
+              <View className="border-border/60 mt-1 gap-2 border-t pt-3">
+                <View className="flex-row items-baseline justify-between">
+                  <Text className="text-xs font-medium">Your own file</Text>
+                  <Text variant="muted" className="text-[10px]">
+                    Optional
+                  </Text>
+                </View>
+                <Text variant="muted" className="text-xs leading-4">
+                  Plays instead of the tone above while Vital is open. When Vital is
+                  closed, the tone above plays.
+                </Text>
+              <View className="flex-row items-center gap-2">
+                <MusicNote size={14} weight="bold" color={customSound ? primary.hex : muted} />
+                <Text variant="muted" className="flex-1 text-xs" numberOfLines={1}>
+                  {customSound ? customSound.name : 'No file chosen'}
+                </Text>
+              </View>
+              <View className="flex-row gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  disabled={!notificationsEnabled || pickingSound}
+                  onPress={() => void chooseSound()}>
+                  <Text className="text-xs">
+                    {pickingSound ? 'Opening...' : customSound ? 'Replace' : 'Choose a file'}
+                  </Text>
+                </Button>
+                {customSound ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    disabled={!notificationsEnabled}
+                    onPress={() => void removeCustomSound()}>
+                    <Text className="text-xs" style={{ color: danger }}>
+                      Remove
+                    </Text>
+                  </Button>
+                ) : null}
+              </View>
+              </View>
+            </View>
+
+            <View className="border-border gap-1 border-t pt-3">
+              <View className="flex-row items-baseline justify-between">
+                <Text className="text-sm font-medium">Alert length</Text>
+                <Text variant="muted" className="text-[10px]">
+                  {formatDuration(dragSeconds ?? alertSeconds)}
+                </Text>
+              </View>
+              <Text variant="muted" className="text-xs leading-4">
+                How long the phone buzzes for each alert.
+              </Text>
+              <Slider
+                minimumValue={MIN_SECONDS}
+                maximumValue={MAX_SECONDS}
+                step={STEP_SECONDS}
+                value={alertSeconds}
+                disabled={!notificationsEnabled}
+                minimumTrackTintColor={primary.hex}
+                maximumTrackTintColor={muted}
+                thumbTintColor={primary.hex}
+                // The readout follows every step so the number matches the thumb, but
+                // storage is only written on release: one value per drag rather than
+                // one per notch crossed.
+                onValueChange={(seconds) => setDragSeconds(Math.round(seconds))}
+                onSlidingComplete={(seconds) => {
+                  setAlertSeconds(Math.round(seconds));
+                  setDragSeconds(null);
+                }}
+              />
+              {/* Notches under the track, one per position the thumb can land on, so
+                  the step size is visible rather than only felt. Evenly spaced matches
+                  the thumb's travel closely enough at this size. */}
+              <View className="-mt-1 flex-row justify-between px-2">
+                {STEPS.map((seconds) => (
+                  <View
+                    key={seconds}
+                    className="h-1.5 w-px"
+                    style={{
+                      backgroundColor:
+                        seconds <= (dragSeconds ?? alertSeconds) ? primary.hex : muted,
+                      opacity: seconds <= (dragSeconds ?? alertSeconds) ? 0.9 : 0.35,
+                    }}
+                  />
+                ))}
+              </View>
+
+              <View className="flex-row justify-between">
+                <Text variant="muted" className="text-[10px]">
+                  {formatDuration(MIN_SECONDS)}
+                </Text>
+                <Text variant="muted" className="text-[10px]">
+                  {formatDuration(MAX_SECONDS)}
+                </Text>
+              </View>
+
+              {/* Runs the real driver with the real settings, so what you feel here is
+                  exactly what an alert will do. Stoppable because the length reaches
+                  five minutes and nobody wants to wait one out. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1"
+                disabled={!notificationsEnabled}
+                onPress={() => {
+                  // The same the other way round: a sample still ringing would sit
+                  // underneath the preview and outlast the stop.
+                  releaseSample();
+                  togglePreview();
+                }}>
+                {previewing ? (
+                  <X size={14} weight="bold" color={danger} />
+                ) : (
+                  <BellRinging size={14} weight="bold" color={primary.hex} />
+                )}
+                <Text style={previewing ? { color: danger } : undefined}>
+                  {previewing ? 'Stop preview' : 'Preview'}
+                </Text>
+              </Button>
+            </View>
+
+            {notificationsError ? (
+              <Text className="text-destructive text-xs">{notificationsError}</Text>
+            ) : null}
+
             {notificationsBlocked ? (
               <View className="gap-2">
                 <Text className="text-destructive text-xs leading-4">
@@ -511,6 +818,97 @@ export default function ProfileScreen() {
         </Text>
       </ScrollView>
       </KeyboardAvoidingView>
+
+      <BottomSheet
+        visible={showStyles}
+        title="Alert style"
+        onClose={() => {
+          releaseSample();
+          setShowStyles(false);
+        }}>
+        {ALERT_PATTERNS.map((pattern) => {
+          const selected = pattern.value === alertPattern;
+          const Icon = pattern.icon;
+
+          return (
+            <Button
+              key={pattern.value}
+              variant={selected ? 'default' : 'outline'}
+              className="h-auto flex-row items-center gap-3 py-3"
+              onPress={() => {
+                setAlertPattern(pattern.value);
+                auditionStyle(pattern.value);
+              }}>
+              <Icon
+                size={20}
+                weight={selected ? 'fill' : 'regular'}
+                color={selected ? ON_PRIMARY : primary.hex}
+              />
+              <View className="flex-1 gap-0.5">
+                <Text
+                  className="text-sm font-medium"
+                  style={selected ? { color: ON_PRIMARY } : undefined}>
+                  {pattern.label}
+                </Text>
+                <Text
+                  className="text-[11px] leading-4"
+                  style={{ color: selected ? ON_PRIMARY : muted }}>
+                  {pattern.description}
+                </Text>
+              </View>
+            </Button>
+          );
+        })}
+        <Text variant="muted" className="pt-1 text-center text-[11px] leading-4">
+          Tap to feel it, with the tone you picked. The sheet stays open so you can
+          compare.
+        </Text>
+      </BottomSheet>
+
+      <BottomSheet
+        visible={showSounds}
+        title="Alert sound"
+        onClose={() => {
+          releaseSample();
+          setShowSounds(false);
+        }}>
+        {ALERT_SOUNDS.map((sound) => {
+          const selected = sound.value === alertSound;
+          const Icon = sound.icon;
+
+          return (
+            <Button
+              key={sound.value}
+              variant={selected ? 'default' : 'outline'}
+              className="h-auto flex-row items-center gap-3 py-3"
+              onPress={() => {
+                setAlertSound(sound.value);
+                audition(sound.asset);
+              }}>
+              <Icon
+                size={20}
+                weight={selected ? 'fill' : 'regular'}
+                color={selected ? ON_PRIMARY : primary.hex}
+              />
+              <View className="flex-1 gap-0.5">
+                <Text
+                  className="text-sm font-medium"
+                  style={selected ? { color: ON_PRIMARY } : undefined}>
+                  {sound.label}
+                </Text>
+                <Text
+                  className="text-[11px] leading-4"
+                  style={{ color: selected ? ON_PRIMARY : muted }}>
+                  {sound.description}
+                </Text>
+              </View>
+            </Button>
+          );
+        })}
+        <Text variant="muted" className="pt-1 text-center text-[11px] leading-4">
+          Tap to hear it. The sheet stays open so you can compare.
+        </Text>
+      </BottomSheet>
 
       <AppearanceModal visible={showAppearance} onClose={() => setShowAppearance(false)} />
       <ConfirmModal

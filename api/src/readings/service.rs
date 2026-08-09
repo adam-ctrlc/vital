@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
 use crate::alerts;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::readings::model;
 use crate::readings::model::{LiveReading, Reading, ReadingInput, Status};
 use crate::readings::simulate;
@@ -34,6 +34,14 @@ pub async fn record(
     source: &str,
     settings: &Settings,
 ) -> AppResult<Reading> {
+    // Guarded here rather than only at the route, so every path that stores a reading
+    // is covered by one rule instead of each remembering it.
+    if input.is_empty() {
+        return Err(AppError::BadRequest(
+            "at least one measurement is required".to_owned(),
+        ));
+    }
+
     let (apparent_power_va, status) = evaluate(&input, settings);
     let reading = insert(pool, &input, apparent_power_va, status, source).await?;
 
@@ -292,6 +300,13 @@ async fn record_sample(
 
     let due = latest_ms.is_none_or(|ms| Utc::now().timestamp_millis() - ms >= sample_interval_ms);
     if !due {
+        return Ok(None);
+    }
+
+    // Same rule as the ingest path. The simulator has never produced an empty sample,
+    // but nothing guaranteed that, and a silent skip is the right answer here: no
+    // caller asked for this write, so there is nobody to report a failure to.
+    if input.is_empty() {
         return Ok(None);
     }
 
