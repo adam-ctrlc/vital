@@ -126,6 +126,45 @@ export async function unregisterDevice(token: string): Promise<void> {
 }
 
 /**
+ * Fires a real notification after a short delay, so the closed app case can be heard.
+ *
+ * The preview button cannot show this. It plays the file in process, which stops the
+ * moment the app goes to the background, whereas a real alert is drawn by Android from
+ * the channel and is unaffected by the app being gone. Those are different paths, and
+ * only this one proves the tone survives leaving the app.
+ *
+ * The delay exists to be left: schedule it, close the app, and listen.
+ */
+export async function sendTestNotification(
+  sound: AlertSoundName = DEFAULT_SOUND,
+  seconds = 5
+): Promise<boolean> {
+  try {
+    if (!(await ensurePermission())) return false;
+
+    const chosen = soundFor(sound);
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Vital test alert',
+        body: `This is how ${chosen.label} sounds when Vital is closed.`,
+        sound: chosen.file ?? 'default',
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds,
+        repeats: false,
+        ...(Platform.OS === 'android' ? { channelId: chosen.channelId } : {}),
+      },
+    });
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Raises a notification from the device itself.
  *
  * This is what makes alerts visible in Expo Go, where remote push cannot reach us.

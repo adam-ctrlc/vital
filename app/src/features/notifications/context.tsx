@@ -43,6 +43,7 @@ import {
   ensurePermission,
   notifyLocally,
   registerDevice,
+  sendTestNotification,
   unregisterDevice,
 } from '@/features/notifications/push';
 import * as readingsApi from '@/features/readings/api';
@@ -84,6 +85,11 @@ type NotificationsValue = {
   previewing: boolean;
   /** Plays the chosen pattern for the chosen length, or stops one already playing. */
   togglePreview: () => void;
+  /**
+   * Schedules a real notification a few seconds out, so the tone can be heard the way
+   * a genuine alert arrives: drawn by Android, with the app closed.
+   */
+  sendTest: () => Promise<boolean>;
 };
 
 const NotificationsContext = createContext<NotificationsValue>({
@@ -103,6 +109,7 @@ const NotificationsContext = createContext<NotificationsValue>({
   removeCustomSound: async () => undefined,
   previewing: false,
   togglePreview: () => undefined,
+  sendTest: async () => false,
 });
 
 export function useNotifications() {
@@ -411,6 +418,8 @@ export function NotificationsProvider({
     buzz(alertSecondsRef.current, alertPatternRef.current);
   }, [previewing, stopBuzz, buzz]);
 
+  const sendTest = useCallback(() => sendTestNotification(alertSoundRef.current), []);
+
   const chooseCustomSound = useCallback(async () => {
     try {
       const picked = await pickCustomSound();
@@ -479,6 +488,7 @@ export function NotificationsProvider({
       removeCustomSound,
       previewing,
       togglePreview,
+      sendTest,
     }),
     [
       activeAlerts,
@@ -497,6 +507,7 @@ export function NotificationsProvider({
       removeCustomSound,
       previewing,
       togglePreview,
+      sendTest,
     ]
   );
 

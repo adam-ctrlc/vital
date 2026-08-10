@@ -10,6 +10,7 @@ import EyeSlash from 'phosphor-react-native/src/icons/EyeSlash';
 import IdentificationCard from 'phosphor-react-native/src/icons/IdentificationCard';
 import Lock from 'phosphor-react-native/src/icons/Lock';
 import MusicNote from 'phosphor-react-native/src/icons/MusicNote';
+import PaperPlaneTilt from 'phosphor-react-native/src/icons/PaperPlaneTilt';
 import Palette from 'phosphor-react-native/src/icons/Palette';
 import PencilSimple from 'phosphor-react-native/src/icons/PencilSimple';
 import ShieldCheck from 'phosphor-react-native/src/icons/ShieldCheck';
@@ -266,10 +267,20 @@ export default function ProfileScreen() {
     removeCustomSound,
     previewing,
     togglePreview,
+    sendTest,
   } = useNotifications();
   const [showStyles, setShowStyles] = useState(false);
   const [showSounds, setShowSounds] = useState(false);
   const [pickingSound, setPickingSound] = useState(false);
+  const [testing, setTesting] = useState<string | null>(null);
+
+  async function runTest() {
+    setTesting('Scheduling...');
+    const ok = await sendTest();
+    setTesting(ok ? 'Arriving in 5 seconds. Close Vital now.' : null);
+    if (!ok) setNotificationsError('Could not schedule the test notification.');
+    setTimeout(() => setTesting(null), 9000);
+  }
   // The live value while a drag is in progress. Null when the thumb is not held, so
   // the readout falls back to what is actually stored.
   const [dragSeconds, setDragSeconds] = useState<number | null>(null);
@@ -749,29 +760,50 @@ export default function ProfileScreen() {
                 </Text>
               </View>
 
-              {/* Runs the real driver with the real settings, so what you feel here is
-                  exactly what an alert will do. Stoppable because the length reaches
-                  five minutes and nobody wants to wait one out. */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1"
-                disabled={!notificationsEnabled}
-                onPress={() => {
-                  // The same the other way round: a sample still ringing would sit
-                  // underneath the preview and outlast the stop.
-                  releaseSample();
-                  togglePreview();
-                }}>
-                {previewing ? (
-                  <X size={14} weight="bold" color={danger} />
-                ) : (
-                  <BellRinging size={14} weight="bold" color={primary.hex} />
-                )}
-                <Text style={previewing ? { color: danger } : undefined}>
-                  {previewing ? 'Stop preview' : 'Preview'}
+              {/* Two buttons because there are two paths, and one cannot show the
+                  other. Preview runs the real driver in process, which is what an alert
+                  does while you are looking at the app. The test schedules a real
+                  notification, which is what Android does when you are not: the sound
+                  comes off the channel, so it is the only way to hear what a closed app
+                  will actually do. */}
+              <View className="mt-1 flex-row gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  disabled={!notificationsEnabled}
+                  onPress={() => {
+                    // The same the other way round: a sample still ringing would sit
+                    // underneath the preview and outlast the stop.
+                    releaseSample();
+                    togglePreview();
+                  }}>
+                  {previewing ? (
+                    <X size={14} weight="bold" color={danger} />
+                  ) : (
+                    <BellRinging size={14} weight="bold" color={primary.hex} />
+                  )}
+                  <Text className="text-xs" style={previewing ? { color: danger } : undefined}>
+                    {previewing ? 'Stop preview' : 'Preview'}
+                  </Text>
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  disabled={!notificationsEnabled || testing !== null}
+                  onPress={() => void runTest()}>
+                  <PaperPlaneTilt size={14} weight="bold" color={primary.hex} />
+                  <Text className="text-xs">Test closed</Text>
+                </Button>
+              </View>
+
+              {testing ? (
+                <Text variant="muted" className="text-[11px] leading-4">
+                  {testing}
                 </Text>
-              </Button>
+              ) : null}
             </View>
 
             {notificationsError ? (
