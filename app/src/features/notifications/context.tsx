@@ -201,7 +201,13 @@ export function NotificationsProvider({
       const source = custom ? { uri: custom.uri } : bundled;
 
       if (source) {
-        void setAudioModeAsync({ playsInSilentMode: true })
+        // Matched to the vibration, which is a system call and carries on when the app
+        // goes to the background. Without this the sound stopped there and the buzz did
+        // not, so an alert half survived being put down. Both now run the full length.
+        //
+        // This covers the app being backgrounded, not killed: with no process there is
+        // no player, and the repeated notifications are what carry the alarm instead.
+        void setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true })
           .catch(() => undefined)
           .then(() => {
             const created = createAudioPlayer(source);
