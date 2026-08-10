@@ -11,7 +11,24 @@ import path from 'node:path';
  * Regenerate with: node scripts/build-alert-sounds.mjs
  */
 
-const RATE = 44100;
+/**
+ * 22.05 kHz rather than 44.1.
+ *
+ * These are synthesised tones, and the highest partial any of them carries is under
+ * 5 kHz, so half the rate loses nothing audible and halves thirty files. That matters
+ * once each one is sustained rather than a fraction of a second long.
+ */
+const RATE = 22050;
+
+/**
+ * How long each tone runs, in seconds.
+ *
+ * Not a fraction of a second, because with the app closed Android plays the channel's
+ * sound exactly once and will not loop it: whatever is in the file is the entire alarm.
+ * A quarter second reads as a notification ping; this reads as something wanting
+ * attention. The motif repeats to fill it rather than being stretched.
+ */
+const SUSTAIN_SECONDS = 12;
 const OUT = path.resolve('assets/sounds');
 
 /** Wraps 16-bit mono PCM in a RIFF/WAVE container. */
@@ -391,10 +408,38 @@ const SOUNDS = {
   ),
 };
 
+/**
+ * Repeats a motif, with a breath between passes, until it fills the sustain.
+ *
+ * The gap is what keeps it from turning into a drone: an alarm is recognisable by its
+ * rhythm, and a motif butted straight against itself loses the shape it was written
+ * with.
+ */
+function sustain(motif, seconds = SUSTAIN_SECONDS) {
+  const total = Math.round(RATE * seconds);
+  const gap = silence(motif.length / RATE > 1 ? 0.45 : 0.3);
+  const out = [];
+
+  while (out.length < total) {
+    out.push(...motif);
+    if (out.length < total) out.push(...gap);
+  }
+
+  // Trimmed to length, then faded out so the cut is not a click.
+  out.length = total;
+  const fade = Math.round(RATE * 0.05);
+  for (let i = 0; i < fade; i += 1) {
+    out[total - 1 - i] *= i / fade;
+  }
+
+  return out;
+}
+
 fs.mkdirSync(OUT, { recursive: true });
 
-for (const [name, samples] of Object.entries(SOUNDS)) {
+for (const [name, motif] of Object.entries(SOUNDS)) {
   const file = path.join(OUT, `${name}.wav`);
+  const samples = sustain(motif);
   const buffer = wav(samples);
   fs.writeFileSync(file, buffer);
   console.log(

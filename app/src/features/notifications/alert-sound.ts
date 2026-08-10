@@ -424,6 +424,15 @@ export const ALERT_SOUNDS: {
   },
 ];
 
+/**
+ * How long each bundled tone runs, matching `scripts/build-alert-sounds.mjs`.
+ *
+ * Used to space repeats so one tone ends as the next begins. Kept here because the
+ * value has to be known without reading the file, and it must be changed with the
+ * generator's SUSTAIN_SECONDS.
+ */
+export const TONE_SECONDS = 12;
+
 export const DEFAULT_SOUND: AlertSoundName = 'default';
 
 export function soundFor(name: AlertSoundName) {

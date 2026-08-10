@@ -268,18 +268,35 @@ export default function ProfileScreen() {
     previewing,
     togglePreview,
     sendTest,
+    cancelTest,
   } = useNotifications();
   const [showStyles, setShowStyles] = useState(false);
   const [showSounds, setShowSounds] = useState(false);
   const [pickingSound, setPickingSound] = useState(false);
-  const [testing, setTesting] = useState<string | null>(null);
+  const [testing, setTesting] = useState<{ title: string; body: string } | null>(null);
+  const [testQueued, setTestQueued] = useState(false);
 
   async function runTest() {
-    setTesting('Scheduling...');
-    const ok = await sendTest();
-    setTesting(ok ? 'Arriving in 5 seconds. Close Vital now.' : null);
-    if (!ok) setNotificationsError('Could not schedule the test notification.');
-    setTimeout(() => setTesting(null), 9000);
+    setTesting({ title: 'Scheduling', body: 'Asking Android to hold the alert.' });
+    const { ok, detail } = await sendTest();
+
+    if (!ok) {
+      setTesting(null);
+      setTestQueued(false);
+      setNotificationsError(detail || 'Could not schedule the test notification.');
+      return;
+    }
+
+    setNotificationsError(null);
+    setTestQueued(true);
+    setTesting({ title: 'Close Vital now', body: `The first tone arrives in 5 seconds. ${detail}` });
+  }
+
+  async function stopTest() {
+    await cancelTest();
+    setTestQueued(false);
+    setTesting({ title: 'Test stopped', body: 'Nothing else is queued.' });
+    setTimeout(() => setTesting(null), 4000);
   }
   // The live value while a drag is in progress. Null when the thumb is not held, so
   // the readout falls back to what is actually stored.
@@ -788,21 +805,50 @@ export default function ProfileScreen() {
                   </Text>
                 </Button>
 
+                {/* Turns into a stop once a test is queued. Covering ten minutes means
+                    fifty scheduled notifications, and without a way to call them off the
+                    only way to end one would be to sit through it. */}
                 <Button
                   variant="outline"
                   size="sm"
                   className="flex-1"
-                  disabled={!notificationsEnabled || testing !== null}
-                  onPress={() => void runTest()}>
-                  <PaperPlaneTilt size={14} weight="bold" color={primary.hex} />
-                  <Text className="text-xs">Test closed</Text>
+                  disabled={!notificationsEnabled}
+                  onPress={() => void (testQueued ? stopTest() : runTest())}>
+                  {testQueued ? (
+                    <X size={14} weight="bold" color={danger} />
+                  ) : (
+                    <PaperPlaneTilt size={14} weight="bold" color={primary.hex} />
+                  )}
+                  <Text className="text-xs" style={testQueued ? { color: danger } : undefined}>
+                    {testQueued ? 'Stop test' : 'Test closed'}
+                  </Text>
                 </Button>
               </View>
 
+              {/* Same shape as the temperature warning on the monitor: a tinted panel
+                  rather than a line of grey text, because this one is an instruction
+                  with a few seconds to act on it. */}
               {testing ? (
-                <Text variant="muted" className="text-[11px] leading-4">
-                  {testing}
-                </Text>
+                <View
+                  className="mt-1 flex-row items-center gap-3 rounded-xl border p-3"
+                  style={{
+                    borderColor: `${primary.hex}40`,
+                    backgroundColor: `${primary.hex}14`,
+                  }}>
+                  <View
+                    className="h-9 w-9 items-center justify-center rounded-full"
+                    style={{ backgroundColor: `${primary.hex}26` }}>
+                    <PaperPlaneTilt size={18} weight="fill" color={primary.hex} />
+                  </View>
+                  <View className="flex-1 gap-0.5">
+                    <Text className="text-sm font-semibold" style={{ color: primary.hex }}>
+                      {testing.title}
+                    </Text>
+                    <Text variant="muted" className="text-xs leading-4">
+                      {testing.body}
+                    </Text>
+                  </View>
+                </View>
               ) : null}
             </View>
 

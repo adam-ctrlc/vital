@@ -40,8 +40,11 @@ import {
 } from '@/features/notifications/alert-pattern';
 import { loadEnabled, saveEnabled } from '@/features/notifications/preference';
 import {
+  cancelTestNotifications,
+  clearDelivered,
   ensurePermission,
   notifyLocally,
+  onNotificationTapped,
   registerDevice,
   sendTestNotification,
   unregisterDevice,
@@ -89,7 +92,9 @@ type NotificationsValue = {
    * Schedules a real notification a few seconds out, so the tone can be heard the way
    * a genuine alert arrives: drawn by Android, with the app closed.
    */
-  sendTest: () => Promise<boolean>;
+  sendTest: () => Promise<{ ok: boolean; detail: string }>;
+  /** Cancels a running test. True when there was one to cancel. */
+  cancelTest: () => Promise<boolean>;
 };
 
 const NotificationsContext = createContext<NotificationsValue>({
@@ -109,7 +114,8 @@ const NotificationsContext = createContext<NotificationsValue>({
   removeCustomSound: async () => undefined,
   previewing: false,
   togglePreview: () => undefined,
-  sendTest: async () => false,
+  sendTest: async () => ({ ok: false, detail: '' }),
+  cancelTest: async () => false,
 });
 
 export function useNotifications() {
@@ -310,6 +316,39 @@ export function NotificationsProvider({
     };
   }, []);
 
+  /**
+   * Tapping a notification stops the alarm.
+   *
+   * An alert that covers its full length keeps sounding on its own schedule, so without
+   * this, seeing it and acting on it would change nothing: it would carry on until it
+   * ran out. Everything queued is called off, the buzz stops, and the tray is cleared of
+   * the passes that already arrived.
+   *
+   * It also acknowledges the alert, which is what stops the rest of the fleet being
+   * notified about something already being dealt with, and records the response time.
+   * Only when the notification carries an alert: a test has nothing to acknowledge.
+   *
+   * A failure here is ignored on purpose. Losing the race to another engineer is the
+   * ordinary way to get one, and the alert is acknowledged either way.
+   */
+  useEffect(
+    () =>
+      onNotificationTapped((alertId) => {
+        stopBuzz();
+        void cancelTestNotifications(testIds.current);
+        testIds.current = [];
+        void clearDelivered();
+
+        if (alertId !== null && token) {
+          void alertsApi
+            .acknowledge(token, alertId)
+            .then(() => setActiveAlerts((count) => Math.max(0, count - 1)))
+            .catch(() => undefined);
+        }
+      }),
+    [stopBuzz, token]
+  );
+
   // Remote push covers a closed app, but only from a development build. This is what
   // makes an alert visible in Expo Go, and it costs nothing where push also works.
   useEffect(() => {
@@ -418,7 +457,28 @@ export function NotificationsProvider({
     buzz(alertSecondsRef.current, alertPatternRef.current);
   }, [previewing, stopBuzz, buzz]);
 
-  const sendTest = useCallback(() => sendTestNotification(alertSoundRef.current), []);
+  /** What the running test still has queued, so it can be called off. */
+  const testIds = useRef<string[]>([]);
+
+  const sendTest = useCallback(async () => {
+    // A second test would otherwise layer on the first, and the earlier passes would
+    // keep arriving with nothing tracking them.
+    await cancelTestNotifications(testIds.current);
+
+    const result = await sendTestNotification(alertSoundRef.current, alertSecondsRef.current);
+    testIds.current = result.identifiers;
+
+    return { ok: result.ok, detail: result.detail };
+  }, []);
+
+  const cancelTest = useCallback(async () => {
+    if (testIds.current.length === 0) return false;
+
+    await cancelTestNotifications(testIds.current);
+    testIds.current = [];
+
+    return true;
+  }, []);
 
   const chooseCustomSound = useCallback(async () => {
     try {
@@ -489,6 +549,7 @@ export function NotificationsProvider({
       previewing,
       togglePreview,
       sendTest,
+      cancelTest,
     }),
     [
       activeAlerts,
@@ -508,6 +569,7 @@ export function NotificationsProvider({
       previewing,
       togglePreview,
       sendTest,
+      cancelTest,
     ]
   );
 
