@@ -14,6 +14,7 @@
     },
     "android": {
       "package": "com.peregrineadrift.vital",
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#0B2545",
         "foregroundImage": "./assets/images/favicon.png"

@@ -67,6 +67,12 @@ class Monitor {
     return crossed;
   }
 
+  /// The current status, spelled the same way the serial log and the backend spell it.
+  const char *statusLabel() { return statusName(); }
+
+  /// Whether the relay is passing load, for anything reporting the board's state.
+  bool relayClosed() const { return relay.isClosed(); }
+
   Snapshot snapshot() const {
     return {voltage, current, power, energy, frequency, powerFactor, temperature};
   }

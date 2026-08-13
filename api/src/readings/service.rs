@@ -172,6 +172,9 @@ pub async fn live(pool: &PgPool, sample_interval_ms: i64) -> AppResult<LiveReadi
         recorded_at,
         simulated,
         connected,
+        // Only worth handing over when a real board is actually reporting: an address
+        // from a board that has gone quiet would just have the app talking to nothing.
+        device_ip: if connected { state.device_ip.clone() } else { None },
     })
 }
 
@@ -218,6 +221,7 @@ struct LiveState {
     source_mode: String,
     updated_at: DateTime<Utc>,
     latest_simulator_ms: Option<i64>,
+    device_ip: Option<String>,
 }
 
 impl LiveState {
@@ -242,7 +246,8 @@ async fn load_live_state(pool: &PgPool) -> AppResult<LiveState> {
         "select s.load_threshold_va, s.trip_threshold_va, s.temp_threshold_c, s.source_mode, s.updated_at,
                 (select (extract(epoch from recorded_at) * 1000)::bigint
                  from readings where source = 'simulator'
-                 order by recorded_at desc limit 1) as latest_simulator_ms
+                 order by recorded_at desc limit 1) as latest_simulator_ms,
+                (select ip_address from device_config where id = 1) as device_ip
          from settings s
          where s.id = 1",
     )

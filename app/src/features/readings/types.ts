@@ -29,6 +29,14 @@ export type LiveReading = MeterFields & {
   simulated: boolean;
   /** True when a real ESP32 posted within the freshness window. */
   connected: boolean;
+  /**
+   * The board's address on its own network, when it is reporting one.
+   *
+   * Present so the app can read the board directly when it happens to share a network
+   * with it, which is immediate rather than the several seconds a reading takes to
+   * travel through the backend and back.
+   */
+  deviceIp?: string | null;
   recordedAt: string;
 };
 

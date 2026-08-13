@@ -6,7 +6,7 @@ import PlugsConnected from 'phosphor-react-native/src/icons/PlugsConnected';
 import Pulse from 'phosphor-react-native/src/icons/Pulse';
 import SignOut from 'phosphor-react-native/src/icons/SignOut';
 import Thermometer from 'phosphor-react-native/src/icons/Thermometer';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -24,6 +24,7 @@ import { Text } from '@/components/ui/text';
 import { useAuth } from '@/features/auth/context';
 import { greet } from '@/features/auth/greeting';
 import * as readings from '@/features/readings/api';
+import { merge, readBoard } from '@/features/readings/lan';
 import { usePoll } from '@/hooks/use-poll';
 import { useAppearance } from '@/lib/appearance';
 import { formatValue } from '@/lib/reading-format';
@@ -46,8 +47,39 @@ export default function DashboardScreen() {
   const [showSignOut, setShowSignOut] = useState(false);
   const [animate, setAnimate] = useState(true);
 
+  /**
+   * The board's address, remembered between polls.
+   *
+   * Learned from the backend, which is the only thing that knows it, and then used
+   * without asking again. Held in a ref rather than state because changing it must not
+   * rebuild the fetcher and restart the poll.
+   */
+  const boardIp = useRef<string | null>(null);
+
+  /**
+   * Backend first, then the board itself when it is reachable.
+   *
+   * The backend answer is authoritative about everything that is not a measurement:
+   * the thresholds, the source mode, whether the board is considered connected. The
+   * board is authoritative about the measurements, and is seconds fresher, because the
+   * backend's copy has been through a post and a database write to get there.
+   *
+   * Reached for only on a shared network, so this is the exception rather than the
+   * rule, and every failure falls back silently to what the backend said.
+   */
   const fetcher = useCallback(
-    (signal: AbortSignal) => readings.latest(token ?? '', signal),
+    async (signal: AbortSignal) => {
+      const base = await readings.latest(token ?? '', signal);
+
+      if (base.deviceIp) boardIp.current = base.deviceIp;
+
+      const ip = boardIp.current;
+      if (!ip || base.simulated) return base;
+
+      const board = await readBoard(ip, signal);
+
+      return board ? merge(base, board) : base;
+    },
     [token]
   );
   const { data, error } = usePoll(fetcher, HEARTBEAT_MS, Boolean(token));

@@ -162,6 +162,13 @@ pub struct LiveReading {
     pub simulated: bool,
     /// True when a hardware reading arrived inside the connected window.
     pub connected: bool,
+    /// The board's address on its own network, when it has reported one.
+    ///
+    /// Here rather than only on `/device/status`, which is admin only, because every
+    /// role's dashboard wants it: on a shared network the app reads the board directly
+    /// and only falls back to this endpoint when it cannot. A private address is far
+    /// less telling than the SSID and firmware version beside it, which stay admin only.
+    pub device_ip: Option<String>,
 }
 
 /// Reactive power from the power triangle. `None` unless both apparent and real power are present.

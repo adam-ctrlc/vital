@@ -8,12 +8,13 @@
 #include "Monitor.h"
 #include "../hardware/Lcd.h"
 #include "../hardware/EnergyMeter.h"
+#include "../net/LiveServer.h"
 #include "../hardware/TemperatureProbe.h"
 #include "../hardware/Relay.h"
 #include "../net/BackendClient.h"
 #include "../net/WifiLink.h"
 
-#define POST_INTERVAL_MS 10000
+#define POST_INTERVAL_MS 5000
 #define HEARTBEAT_INTERVAL_MS 30000
 // Reconnection runs on its own cadence rather than riding the heartbeat. Tied to the
 // heartbeat, a drop one second after one went out was left unattended for the next 29,
@@ -63,6 +64,10 @@ class Main {
 
     net.begin();
     net.connect();
+
+    // After the link, since it prints the address it is reachable on and there is no
+    // address before then.
+    live.begin();
   }
 
   void loop() {
@@ -91,11 +96,20 @@ class Main {
     if (monitor.takeAlarmEdge() && online) post();
 
     // The record of the run, unchanged and deliberately not reset by the line above, so
-    // rows stay an even ten seconds apart whether or not an alarm interrupted them.
+    // rows stay evenly spaced whether or not an alarm interrupted them.
+    //
+    // This interval is what decides how often a row is stored: in hardware mode the API
+    // keeps every reading it is given, so the board's cadence is the database's. It is
+    // not a display rate, and lowering it is paid for in rows and invocations rather
+    // than in how quickly an overload is noticed, which no longer waits for it at all.
     if (now - lastPost >= POST_INTERVAL_MS) {
       lastPost = now;
       if (online) post();
     }
+
+    // Served every pass and never waited on, so a caller cannot hold up the sampling
+    // or the trip timer that share this loop.
+    live.loop();
 
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
       lastHeartbeat = now;
@@ -173,6 +187,9 @@ class Main {
   TemperatureProbe probe;
   Relay relay;
   Monitor monitor;
+  // Declared after the monitor it reads: members are built in declaration order, and
+  // binding to one that does not exist yet is how that bites.
+  LiveServer live{monitor};
   Preferences prefs;
   unsigned long lastPost = 0;
   unsigned long lastHeartbeat = 0;

@@ -40,11 +40,9 @@ class BackendClient {
     String body;
     serializeJson(doc, body);
 
-    WiFiClientSecure client;
-    client.setInsecure();
-
     HTTPClient http;
-    http.begin(client, String(BACKEND_URL) + "/api/v1/device/heartbeat");
+    http.begin(shared(), String(BACKEND_URL) + "/api/v1/device/heartbeat");
+    http.setReuse(true);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("x-device-key", DEVICE_KEY);
 
@@ -90,11 +88,11 @@ class BackendClient {
     String body;
     serializeJson(doc, body);
 
-    WiFiClientSecure client;
-    client.setInsecure();
-
     HTTPClient http;
-    http.begin(client, String(BACKEND_URL) + "/api/v1/readings");
+    http.begin(shared(), String(BACKEND_URL) + "/api/v1/readings");
+    // Asks the server to hold the socket open, which is what lets the next post skip
+    // the handshake. Without it the connection is closed under us and reuse is moot.
+    http.setReuse(true);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("x-device-key", DEVICE_KEY);
 
@@ -112,6 +110,27 @@ class BackendClient {
   }
 
  private:
+  /// The one TLS client, kept alive between posts.
+  ///
+  /// A fresh `WiFiClientSecure` per call meant a full handshake per call, which on this
+  /// chip is one to three seconds: longer than the interval it was being asked to keep,
+  /// and long enough to starve the loop that also runs the trip timer. Holding the
+  /// session open makes a post a few hundred milliseconds instead.
+  ///
+  /// Still `setInsecure`, and still deliberately: pinning a root CA is the fix for that,
+  /// and the board bound-checks anything a response tells it in the meantime.
+  WiFiClientSecure &shared() {
+    if (!secureReady) {
+      secure.setInsecure();
+      secureReady = true;
+    }
+
+    return secure;
+  }
+
+  WiFiClientSecure secure;
+  bool secureReady = false;
+
   /// Adds one measurement, reporting whether it had anything to add.
   ///
   /// A missing sensor leaves the key out entirely rather than sending null, keeping
