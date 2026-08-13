@@ -95,6 +95,13 @@ type NotificationsValue = {
   sendTest: () => Promise<{ ok: boolean; detail: string }>;
   /** Cancels a running test. True when there was one to cancel. */
   cancelTest: () => Promise<boolean>;
+  /**
+   * Stops an alarm: the buzz, anything still queued, and what is already in the tray.
+   *
+   * Shared by the notification tap and the acknowledge button, which are the two ways
+   * of saying the alert has been seen and should therefore both end it.
+   */
+  silence: () => void;
 };
 
 const NotificationsContext = createContext<NotificationsValue>({
@@ -116,6 +123,7 @@ const NotificationsContext = createContext<NotificationsValue>({
   togglePreview: () => undefined,
   sendTest: async () => ({ ok: false, detail: '' }),
   cancelTest: async () => false,
+  silence: () => undefined,
 });
 
 export function useNotifications() {
@@ -252,6 +260,16 @@ export function NotificationsProvider({
     setPreviewing(false);
   }, [releasePlayer]);
 
+  /** What the running test still has queued, so it can be called off. */
+  const testIds = useRef<string[]>([]);
+
+  const silence = useCallback(() => {
+    stopBuzz();
+    void cancelTestNotifications(testIds.current);
+    testIds.current = [];
+    void clearDelivered();
+  }, [stopBuzz]);
+
   // A repeating vibration outlives the component that started it, so it has to be
   // stopped explicitly rather than left to the timer that may never fire.
   useEffect(
@@ -340,10 +358,7 @@ export function NotificationsProvider({
   useEffect(
     () =>
       onNotificationTapped((alertId) => {
-        stopBuzz();
-        void cancelTestNotifications(testIds.current);
-        testIds.current = [];
-        void clearDelivered();
+        silence();
 
         if (alertId !== null && token) {
           void alertsApi
@@ -352,7 +367,7 @@ export function NotificationsProvider({
             .catch(() => undefined);
         }
       }),
-    [stopBuzz, token]
+    [silence, token]
   );
 
   // Remote push covers a closed app, but only from a development build. This is what
@@ -463,9 +478,6 @@ export function NotificationsProvider({
     buzz(alertSecondsRef.current, alertPatternRef.current);
   }, [previewing, stopBuzz, buzz]);
 
-  /** What the running test still has queued, so it can be called off. */
-  const testIds = useRef<string[]>([]);
-
   const sendTest = useCallback(async () => {
     // A second test would otherwise layer on the first, and the earlier passes would
     // keep arriving with nothing tracking them.
@@ -556,6 +568,7 @@ export function NotificationsProvider({
       togglePreview,
       sendTest,
       cancelTest,
+      silence,
     }),
     [
       activeAlerts,
@@ -576,6 +589,7 @@ export function NotificationsProvider({
       togglePreview,
       sendTest,
       cancelTest,
+      silence,
     ]
   );
 

@@ -56,6 +56,17 @@ class Monitor {
     applyRelay();
   }
 
+  /// True once per crossing into the alarm level, and cleared by reading it.
+  ///
+  /// Edge rather than level: the caller uses it to post immediately, and a level would
+  /// have it posting on every pass for as long as the load stayed up.
+  bool takeAlarmEdge() {
+    const bool crossed = alarmEdge;
+    alarmEdge = false;
+
+    return crossed;
+  }
+
   Snapshot snapshot() const {
     return {voltage, current, power, energy, frequency, powerFactor, temperature};
   }
@@ -151,6 +162,9 @@ class Monitor {
           status = STATUS_WARNING;
           abnormalSince = now;
           overTripSince = overTrip() ? now : 0;
+          // The crossing itself, not the state. Waiting for the next scheduled post
+          // would sit on this for up to the post interval before anyone was told.
+          alarmEdge = true;
         }
         break;
 
@@ -292,6 +306,7 @@ class Monitor {
   Lcd &lcd;
 
   Status status = STATUS_NORMAL;
+  bool alarmEdge = false;
   unsigned long lastSample = 0;
   unsigned long abnormalSince = 0;
   unsigned long overTripSince = 0;

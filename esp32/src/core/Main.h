@@ -84,13 +84,17 @@ class Main {
 
     bool online = WiFi.status() == WL_CONNECTED;
 
+    // Crossing the alarm level is posted the instant it is seen, on its own path and
+    // off the schedule. On the interval alone the backend heard about an overload up to
+    // POST_INTERVAL_MS late, and every one of those seconds is a second before anyone
+    // is told. There is no timer here at all: it goes out in the same pass that saw it.
+    if (monitor.takeAlarmEdge() && online) post();
+
+    // The record of the run, unchanged and deliberately not reset by the line above, so
+    // rows stay an even ten seconds apart whether or not an alarm interrupted them.
     if (now - lastPost >= POST_INTERVAL_MS) {
       lastPost = now;
-      if (online) {
-        Monitor::Snapshot s = monitor.snapshot();
-        backend.postReading(s.voltage, s.current, s.temperature, s.power,
-                            s.powerFactor, s.frequency, s.energy);
-      }
+      if (online) post();
     }
 
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
@@ -100,6 +104,12 @@ class Main {
   }
 
  private:
+  void post() {
+    Monitor::Snapshot s = monitor.snapshot();
+    backend.postReading(s.voltage, s.current, s.temperature, s.power, s.powerFactor,
+                        s.frequency, s.energy);
+  }
+
   // Adopts thresholds from a heartbeat, but only when they are valid and actually
   // changed, so unchanged heartbeats never wear the flash. Persisting them means an
   // edit made while the board was offline sticks once it reconnects and reboots.

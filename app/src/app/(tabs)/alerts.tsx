@@ -26,6 +26,7 @@ import { Text } from '@/components/ui/text';
 import * as alertsApi from '@/features/alerts/api';
 import type { Alert, AlertKind } from '@/features/alerts/types';
 import { useAuth } from '@/features/auth/context';
+import { useNotifications } from '@/features/notifications/context';
 import { useDebounced } from '@/hooks/use-debounced';
 import { usePoll } from '@/hooks/use-poll';
 import { useAppearance } from '@/lib/appearance';
@@ -73,6 +74,7 @@ const SCOPES = [
 
 export default function AlertsScreen() {
   const { token } = useAuth();
+  const { silence } = useNotifications();
   const { primary } = useAppearance();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -136,6 +138,12 @@ export default function AlertsScreen() {
   const total = data?.total ?? 0;
 
   async function acknowledge(id: number) {
+    // Before the request, not after it. Acknowledging is someone saying they have seen
+    // it, and the alarm should stop when they say so rather than when the server has
+    // finished agreeing. Until now the only way to stop one was tapping the
+    // notification, which is no use to whoever already had the app open.
+    silence();
+
     setBusy(id);
     setAckError(null);
     try {
