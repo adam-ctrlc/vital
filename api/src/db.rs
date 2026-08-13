@@ -12,7 +12,12 @@ use crate::error::AppResult;
 /// were enough to take the whole budget, and every cold start after that failed to
 /// build with `EMAXCONNSESSION`, which turns into a 500 on every route including the
 /// ones that never touch the database.
-const MAX_CONNECTIONS: u32 = 2;
+/// One, not two. The pooler allows fifteen clients in total, so this is really a cap on
+/// how many warm instances can exist at once: at two, eight of them exhaust the budget
+/// and every cold start after that fails to build. Serverless handles one request at a
+/// time in the common case, so the second connection bought concurrency that was rarely
+/// used and cost half the fleet's headroom.
+const MAX_CONNECTIONS: u32 = 1;
 
 /// How long an unused connection is kept before it is handed back.
 ///
@@ -20,7 +25,7 @@ const MAX_CONNECTIONS: u32 = 2;
 /// it stops serving, and without a timeout it keeps its connections for that whole
 /// time: the budget is consumed by instances doing nothing. Releasing when idle is what
 /// lets a burst of traffic settle instead of locking the pool until the instances die.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A ceiling on any one connection's life, so a connection the pooler has quietly
 /// dropped cannot sit in the pool being handed out forever.

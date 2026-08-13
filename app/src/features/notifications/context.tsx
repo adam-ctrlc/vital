@@ -263,7 +263,15 @@ export function NotificationsProvider({
   /** What the running test still has queued, so it can be called off. */
   const testIds = useRef<string[]>([]);
 
+  /**
+   * Set by the stop button and by acknowledging, cleared when the alerts are gone or a
+   * new one arrives. Without it the poll would restart the buzz seconds after someone
+   * asked for quiet.
+   */
+  const silenced = useRef(false);
+
   const silence = useCallback(() => {
+    silenced.current = true;
     stopBuzz();
     void cancelTestNotifications(testIds.current);
     testIds.current = [];
@@ -396,17 +404,36 @@ export function NotificationsProvider({
         // must stay silent.
         // The badge and the count keep working when notifications are off. Only the
         // things that interrupt, the buzz and the banner, are held back.
-        if (lastCount.current !== null && count > lastCount.current && enabledRef.current) {
-          const raised = count - lastCount.current;
+        const rose = lastCount.current !== null && count > lastCount.current;
+        // An alarm that stops while the fault continues is not an alarm. Once the buzz
+        // for one round has run its length, an alert still sitting unacknowledged starts
+        // it again, so a transformer left over its limit keeps saying so.
+        const stillOpen = count > 0 && !buzzStop.current && !silenced.current;
+
+        if ((rose || stillOpen) && enabledRef.current) {
+          // Silencing lasts until the alerts are dealt with, not for a few seconds. A
+          // stop button that the next poll undoes is worse than no stop button.
+          if (rose) silenced.current = false;
+
           if (Platform.OS !== 'web') buzz(alertSecondsRef.current, alertPatternRef.current);
-          void notifyLocally(
-            raised === 1 ? 'Transformer alert' : `${raised} transformer alerts`,
-            raised === 1
-              ? 'A reading crossed a threshold. Open Vital to acknowledge it.'
-              : 'Readings crossed the thresholds. Open Vital to acknowledge them.',
-            alertSoundRef.current
-          );
+
+          // Only on a genuine rise. Repeating the banner every round would bury the
+          // tray, and the remote push already carries the ongoing case.
+          if (rose) {
+            const raised = count - (lastCount.current ?? 0);
+            void notifyLocally(
+              raised === 1 ? 'Transformer alert' : `${raised} transformer alerts`,
+              raised === 1
+                ? 'A reading crossed a threshold. Open Vital to acknowledge it.'
+                : 'Readings crossed the thresholds. Open Vital to acknowledge them.',
+              alertSoundRef.current
+            );
+          }
         }
+
+        // Nothing left open means nothing left to silence.
+        if (count === 0) silenced.current = false;
+
         lastCount.current = count;
         setActiveAlerts(count);
 

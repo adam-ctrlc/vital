@@ -43,6 +43,29 @@ pub async fn record(
     }
 
     let (apparent_power_va, status) = evaluate(&input, settings);
+
+    // What the board reported, against what it is judged by. Kept because twice now a
+    // load that raised no alert has been indistinguishable from one that was never
+    // measured: the alert code only speaks when it fires, so silence covered both
+    // "below the threshold" and "nothing to compare".
+    //
+    // Loud only when it is worth reading. An ordinary reading under the limit is the
+    // overwhelming majority and says nothing, so it goes to debug; an overload, or a
+    // reading with no load in it at all, goes to info where it will actually be seen.
+    if status == Status::Overload || apparent_power_va.is_none() {
+        tracing::info!(
+            source,
+            voltage_v = ?input.voltage_v,
+            current_a = ?input.current_a,
+            apparent_power_va = ?apparent_power_va,
+            alarm_at = settings.load_threshold_va,
+            ?status,
+            "reading evaluated"
+        );
+    } else {
+        tracing::debug!(source, apparent_power_va = ?apparent_power_va, "reading evaluated");
+    }
+
     let reading = insert(pool, &input, apparent_power_va, status, source).await?;
 
     alerts::service::evaluate(pool, &reading, settings).await?;
@@ -247,7 +270,7 @@ async fn load_live_state(pool: &PgPool) -> AppResult<LiveState> {
                 (select (extract(epoch from recorded_at) * 1000)::bigint
                  from readings where source = 'simulator'
                  order by recorded_at desc limit 1) as latest_simulator_ms,
-                (select ip_address from device_config where id = 1) as device_ip
+                (select ip_address from device_telemetry where id = 1) as device_ip
          from settings s
          where s.id = 1",
     )
