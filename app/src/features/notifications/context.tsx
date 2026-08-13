@@ -50,6 +50,7 @@ import {
   unregisterDevice,
 } from '@/features/notifications/push';
 import * as readingsApi from '@/features/readings/api';
+import type { LiveReading } from '@/features/readings/types';
 
 const POLL_MS = 5000;
 
@@ -96,6 +97,19 @@ type NotificationsValue = {
   /** Cancels a running test. True when there was one to cancel. */
   cancelTest: () => Promise<boolean>;
   /**
+   * Hands the newest live reading to the alarm.
+   *
+   * The alarm runs off this rather than off the backend's alert list, because the list
+   * is a record and a record is always behind: the board posts, a row is written, an
+   * alert is raised, and only then does a poll notice. Every one of those steps is
+   * latency in front of a noise whose whole job is to be immediate. The screen already
+   * holds the measurement and the threshold it is judged by, so it can decide itself.
+   *
+   * The backend still owns the alert: who acknowledged it, when, and how long they
+   * took. That is a different question from whether to make a noise right now.
+   */
+  reportLive: (reading: LiveReading | null) => void;
+  /**
    * Stops an alarm: the buzz, anything still queued, and what is already in the tray.
    *
    * Shared by the notification tap and the acknowledge button, which are the two ways
@@ -123,6 +137,7 @@ const NotificationsContext = createContext<NotificationsValue>({
   togglePreview: () => undefined,
   sendTest: async () => ({ ok: false, detail: '' }),
   cancelTest: async () => false,
+  reportLive: () => undefined,
   silence: () => undefined,
 });
 
@@ -270,6 +285,35 @@ export function NotificationsProvider({
    */
   const silenced = useRef(false);
 
+  /** Whether the last live reading was over a limit, so a return to normal is visible. */
+  const liveOver = useRef(false);
+
+  const reportLive = useCallback(
+    (reading: LiveReading | null) => {
+      if (!reading || Platform.OS === 'web') return;
+
+      const over = reading.status === 'overload' || reading.overTemperature;
+
+      if (!over) {
+        // The fault is gone, so the noise goes with it, and the silence is spent: the
+        // next crossing is a new event and has to be able to sound.
+        if (liveOver.current) stopBuzz();
+        liveOver.current = false;
+
+        return;
+      }
+
+      liveOver.current = true;
+
+      // Re-armed once the previous round finishes rather than restarted every second,
+      // which would retrigger the pattern from the top and never let it play.
+      if (!enabledRef.current || buzzStop.current || silenced.current) return;
+
+      buzz(alertSecondsRef.current, alertPatternRef.current);
+    },
+    [buzz, stopBuzz]
+  );
+
   const silence = useCallback(() => {
     silenced.current = true;
     stopBuzz();
@@ -404,31 +448,27 @@ export function NotificationsProvider({
         // must stay silent.
         // The badge and the count keep working when notifications are off. Only the
         // things that interrupt, the buzz and the banner, are held back.
+        // A newly opened alert, which is worth a banner wherever the app happens to be.
+        // Keeping an ongoing one sounding is not this path's job: an alert stays open
+        // until somebody acknowledges it, long after the load may have come back down,
+        // and alarming for a fault that has passed is how people learn to ignore alarms.
+        // The live reading drives that, because it knows whether it is still happening.
         const rose = lastCount.current !== null && count > lastCount.current;
-        // An alarm that stops while the fault continues is not an alarm. Once the buzz
-        // for one round has run its length, an alert still sitting unacknowledged starts
-        // it again, so a transformer left over its limit keeps saying so.
-        const stillOpen = count > 0 && !buzzStop.current && !silenced.current;
 
-        if ((rose || stillOpen) && enabledRef.current) {
-          // Silencing lasts until the alerts are dealt with, not for a few seconds. A
-          // stop button that the next poll undoes is worse than no stop button.
-          if (rose) silenced.current = false;
+        if (rose && enabledRef.current) {
+          // A new alert is new information, so an earlier silence does not cover it.
+          silenced.current = false;
 
           if (Platform.OS !== 'web') buzz(alertSecondsRef.current, alertPatternRef.current);
 
-          // Only on a genuine rise. Repeating the banner every round would bury the
-          // tray, and the remote push already carries the ongoing case.
-          if (rose) {
-            const raised = count - (lastCount.current ?? 0);
-            void notifyLocally(
-              raised === 1 ? 'Transformer alert' : `${raised} transformer alerts`,
-              raised === 1
-                ? 'A reading crossed a threshold. Open Vital to acknowledge it.'
-                : 'Readings crossed the thresholds. Open Vital to acknowledge them.',
-              alertSoundRef.current
-            );
-          }
+          const raised = count - (lastCount.current ?? 0);
+          void notifyLocally(
+            raised === 1 ? 'Transformer alert' : `${raised} transformer alerts`,
+            raised === 1
+              ? 'A reading crossed a threshold. Open Vital to acknowledge it.'
+              : 'Readings crossed the thresholds. Open Vital to acknowledge them.',
+            alertSoundRef.current
+          );
         }
 
         // Nothing left open means nothing left to silence.
@@ -596,6 +636,7 @@ export function NotificationsProvider({
       sendTest,
       cancelTest,
       silence,
+      reportLive,
     }),
     [
       activeAlerts,
@@ -617,6 +658,7 @@ export function NotificationsProvider({
       sendTest,
       cancelTest,
       silence,
+      reportLive,
     ]
   );
 

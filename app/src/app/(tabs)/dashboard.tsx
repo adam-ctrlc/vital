@@ -6,7 +6,7 @@ import PlugsConnected from 'phosphor-react-native/src/icons/PlugsConnected';
 import Pulse from 'phosphor-react-native/src/icons/Pulse';
 import SignOut from 'phosphor-react-native/src/icons/SignOut';
 import Thermometer from 'phosphor-react-native/src/icons/Thermometer';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -26,6 +26,7 @@ import { greet } from '@/features/auth/greeting';
 import * as readings from '@/features/readings/api';
 import { merge, readBoard } from '@/features/readings/lan';
 import { usePoll } from '@/hooks/use-poll';
+import { useNotifications } from '@/features/notifications/context';
 import { useAppearance } from '@/lib/appearance';
 import { formatValue } from '@/lib/reading-format';
 
@@ -34,6 +35,7 @@ const HEARTBEAT_MS = 1000;
 export default function DashboardScreen() {
   const { token, user, signOut } = useAuth();
   const { primary } = useAppearance();
+  const { reportLive } = useNotifications();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const ac = primary.hex;
@@ -83,6 +85,13 @@ export default function DashboardScreen() {
     [token]
   );
   const { data, error } = usePoll(fetcher, HEARTBEAT_MS, Boolean(token));
+
+  // Straight from the poll to the alarm. This is the shortest path there is: the number
+  // on screen and the noise come from the same reading, so they cannot disagree, and
+  // nothing waits on the backend noticing what the screen can already see.
+  useEffect(() => {
+    reportLive(data);
+  }, [data, reportLive]);
 
   const overload = data?.status === 'overload';
   const hot = data?.overTemperature ?? false;
