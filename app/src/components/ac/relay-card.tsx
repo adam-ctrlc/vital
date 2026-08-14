@@ -145,7 +145,15 @@ export function RelayCard() {
   // Manual control is for when the protection is doing something, which is what an
   // operator would be reacting to. With a healthy load closed there is nothing to
   // decide, so the buttons say so rather than inviting a pointless switch.
-  const canControl = !unknown && (overload || open);
+  //
+  // A reported lockout enables the buttons on its own, ahead of the position check.
+  // The two facts arrive by different routes: the position comes from the newest
+  // hardware reading, the lockout from the heartbeat. A board whose meter has stopped
+  // answering posts no readings at all, so the position freezes at whatever it last
+  // was, possibly closed, while the heartbeat keeps reporting the lockout truthfully.
+  // Gated on position alone, that board showed "Locked out" with both buttons greyed
+  // out: the one screen that can release it, refusing to.
+  const canControl = lockedOut || (!unknown && (overload || open));
   // Contacts reported open with current still flowing. One of those is wrong, and the
   // measurement is the one with evidence behind it.
   const stuck = open && (current ?? 0) >= 0.15;
