@@ -16,6 +16,12 @@
 
 #define POST_INTERVAL_MS 5000
 #define HEARTBEAT_INTERVAL_MS 30000
+/// How often to ask while locked out.
+///
+/// The heartbeat is the only thing that ever asks the backend a question, so it is also
+/// how a reset reaches the board. Half a minute is fine for reporting link state and far
+/// too long to stand next to a transformer waiting for the load to come back.
+#define LOCKED_HEARTBEAT_INTERVAL_MS 5000
 // Reconnection runs on its own cadence rather than riding the heartbeat. Tied to the
 // heartbeat, a drop one second after one went out was left unattended for the next 29,
 // which is the whole of the API's 30 second freshness window: the dashboard went dark
@@ -57,9 +63,11 @@ class Main {
     // browns out the supply. Coming back believing everything is fine would close
     // straight back into it.
     tripped = prefs.getBool("tripped", false);
+    lockedOut = prefs.getBool("locked", false);
     if (tripped) {
-      Serial.println("restored a trip from before the reboot, load stays open");
-      monitor.restoreTrip(millis());
+      Serial.println(lockedOut ? "restored a lockout, load stays open until reset"
+                               : "restored a trip from before the reboot, load stays open");
+      monitor.restoreTrip(millis(), lockedOut);
     }
 
     net.begin();
@@ -80,6 +88,15 @@ class Main {
     if (monitor.isTripped() != tripped) {
       tripped = monitor.isTripped();
       prefs.putBool("tripped", tripped);
+    }
+
+    // Kept separately from the trip. A trip is a state the board can leave on its own;
+    // a lockout is one it cannot, so losing it to a reboot would quietly re-energise
+    // the very fault it was holding open.
+    if (monitor.isLockedOut() != lockedOut) {
+      lockedOut = monitor.isLockedOut();
+      prefs.putBool("locked", lockedOut);
+      if (lockedOut) Serial.println("out of reclose attempts, load stays open until reset");
     }
 
     if (WiFi.status() != WL_CONNECTED && now - lastReconnect >= RECONNECT_INTERVAL_MS) {
@@ -111,9 +128,19 @@ class Main {
     // or the trip timer that share this loop.
     live.loop();
 
-    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+    const unsigned long heartbeatEvery =
+        monitor.isLockedOut() ? LOCKED_HEARTBEAT_INTERVAL_MS : HEARTBEAT_INTERVAL_MS;
+
+    if (now - lastHeartbeat >= heartbeatEvery) {
       lastHeartbeat = now;
-      if (online) applyThresholds(backend.postHeartbeat());
+      if (online) {
+        BackendClient::HeartbeatResult ack = backend.postHeartbeat(monitor.isLockedOut());
+        applyThresholds(ack);
+
+        // An operator has been to look and says to close it. The board cannot reach
+        // this conclusion itself, which is the whole reason it locked out.
+        if (ack.ok && ack.resetRelay) monitor.resetLockout(now);
+      }
     }
   }
 
@@ -121,7 +148,7 @@ class Main {
   void post() {
     Monitor::Snapshot s = monitor.snapshot();
     backend.postReading(s.voltage, s.current, s.temperature, s.power, s.powerFactor,
-                        s.frequency, s.energy);
+                        s.frequency, s.energy, monitor.relayClosed());
   }
 
   // Adopts thresholds from a heartbeat, but only when they are valid and actually
@@ -195,4 +222,5 @@ class Main {
   unsigned long lastHeartbeat = 0;
   unsigned long lastReconnect = 0;
   bool tripped = false;
+  bool lockedOut = false;
 };

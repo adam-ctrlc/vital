@@ -9,12 +9,13 @@ export function update(
   token: string,
   loadThresholdVa: number,
   tripThresholdVa: number,
-  tempThresholdC: number
+  tempThresholdC: number,
+  recloseDelaySeconds: number
 ) {
   return request<Settings>('/settings', {
     method: 'PUT',
     token,
-    body: { loadThresholdVa, tripThresholdVa, tempThresholdC },
+    body: { loadThresholdVa, tripThresholdVa, tempThresholdC, recloseDelaySeconds },
   });
 }
 

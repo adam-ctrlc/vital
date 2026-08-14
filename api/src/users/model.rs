@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::auth::Role;
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: Uuid,

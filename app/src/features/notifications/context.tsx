@@ -288,9 +288,49 @@ export function NotificationsProvider({
   /** Whether the last live reading was over a limit, so a return to normal is visible. */
   const liveOver = useRef(false);
 
+  /**
+   * The relay position last seen, so only a change is announced.
+   *
+   * Null until the first reading, which is what stops opening the app announcing a
+   * relay that opened an hour ago. The same reason the alert count establishes a
+   * baseline silently on its first poll.
+   */
+  const lastRelay = useRef<boolean | null>(null);
+
+  /**
+   * Says when the contacts move, which nothing else does.
+   *
+   * The alarm follows the load and stops when the load comes back down, so on its own
+   * it never tells anyone the relay actually opened: the alarm falls silent either way,
+   * whether the operator shed load or the board cut it. Those are very different
+   * outcomes and only one of them leaves the transformer disconnected.
+   *
+   * A banner rather than a buzz. An opening is nearly always accompanied by the
+   * overload alarm already sounding, and a second noise on top of it says nothing the
+   * first one did not.
+   */
+  const announceRelay = useCallback((closed: boolean | null) => {
+    if (closed === null) return;
+
+    const previous = lastRelay.current;
+    lastRelay.current = closed;
+
+    if (previous === null || previous === closed || !enabledRef.current) return;
+
+    void notifyLocally(
+      closed ? 'Load reconnected' : 'Load disconnected',
+      closed
+        ? 'The relay closed. The transformer is supplying the load again.'
+        : 'The relay opened. The load is disconnected until it closes again.',
+      alertSoundRef.current
+    );
+  }, []);
+
   const reportLive = useCallback(
     (reading: LiveReading | null) => {
       if (!reading || Platform.OS === 'web') return;
+
+      announceRelay(reading.relayClosed ?? null);
 
       const over = reading.status === 'overload' || reading.overTemperature;
 
@@ -311,7 +351,7 @@ export function NotificationsProvider({
 
       buzz(alertSecondsRef.current, alertPatternRef.current);
     },
-    [buzz, stopBuzz]
+    [buzz, stopBuzz, announceRelay]
   );
 
   const silence = useCallback(() => {

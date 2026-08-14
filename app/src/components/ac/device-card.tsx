@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { View } from 'react-native';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Text } from '@/components/ui/text';
@@ -45,7 +46,6 @@ export function DeviceCard() {
 
   const [status, setStatus] = useState<DeviceStatus | null>(null);
   const [loading, setLoading] = useState(true);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {

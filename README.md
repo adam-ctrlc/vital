@@ -24,7 +24,7 @@ An ESP32 measures the transformer and reports it to a Rust API, which stores eve
 ## Architecture
 
 ```
-ESP32  ──POST /readings + /device/heartbeat──>  Rust API  ──>  PostgreSQL
+ESP32  ──POST /readings + /device/heartbeat──>  Rust API  ──>  Google Sheets
    (x-device-key)                                  │
 Expo app  ──polls, bearer token───────────────────┘
 ```
@@ -33,7 +33,7 @@ The API is stateless. Serverless functions cannot keep a background loop alive, 
 
 ## Tech stack
 
-**API** Rust, Axum 0.8, sqlx 0.8 against PostgreSQL (a session pooler is required), JWT (HS256) auth, argon2 password hashing. Deployed to Vercel in the `sin1` region, co-located with the database.
+**API** Rust, Axum 0.8, storing everything in a Google Sheet through the Sheets REST API, JWT (HS256) auth, argon2 password hashing. Deployed to Vercel in the `sin1` region.
 
 **App** Expo SDK 54, Expo Router, React Native 0.81, NativeWind (Tailwind), React Native Reusables, react-native-reanimated and react-native-svg for the waveform and charts, Phosphor icons, KaTeX pre-rendered offline for the formulas.
 
@@ -44,7 +44,8 @@ The API is stateless. Serverless functions cannot keep a background loop alive, 
 ```
 api/            Rust API
   src/          one module per domain: auth, readings, alerts, settings, device, users
-  migrations/   SQL, applied in development and shared with production
+  sheets/       the spreadsheet as a database: client, row mapping, one store per domain
+  scripts/      seed-sheets.mjs, which loads an export into a fresh spreadsheet
   api/index.rs  Vercel serverless entrypoint
 app/            Expo application
   src/app/      Expo Router routes; (tabs) holds the screens
@@ -62,7 +63,10 @@ esp32/          firmware (see esp32/structure.txt and esp32/pins.txt)
 Create `api/.env`:
 
 ```
-DATABASE_URL=postgres://...      # a session pooler, not a transaction pooler
+# The service account JSON, on one line. Single quoted, because dotenvy processes
+# double quotes and the JSON is full of them.
+GOOGLE_SERVICE_ACCOUNT='{"type":"service_account",...}'
+SHEETS_SPREADSHEET_ID=the-id-from-the-spreadsheet-url
 JWT_SECRET=a-long-random-string
 DEVICE_API_KEY=a-long-random-string
 PORT=8080
@@ -77,46 +81,52 @@ cd api
 cargo run
 ```
 
-The development server applies migrations on start. Production never migrates: both share one database, so running the development server (or a one-off connection) is how production picks up a new migration.
+There is nothing to migrate. A tab is created with its header the first time something is written to it, so the same binary serves development and production.
+
+The spreadsheet must be shared with the service account's `client_email` as an **Editor**. Without that every request fails with a 403 that says only "The caller does not have permission".
 
 ### Accounts
 
-There are no accounts until you create one, and **the seeder is not committed**: this repository is public, and the accounts it creates are the live ones, since development and production share a database. Create `api/src/bin/seed.rs`, which cargo discovers automatically:
+There are no accounts until you create one, and **the seeder is not committed**: this repository is public, and the accounts it creates are the live ones. Create `api/src/bin/seed.rs`, which cargo discovers automatically:
 
 ```rust
-use dynavolt_api::auth::{Role, password};
+use dynavolt_api::auth::Role;
 use dynavolt_api::config::Config;
-use dynavolt_api::db;
 use dynavolt_api::error::{AppError, AppResult};
+use dynavolt_api::sheets::{store, Sheets};
+use dynavolt_api::users::model::CreateUser;
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
     dotenvy::dotenv().ok();
 
-    // From the environment, never a literal. The insert below reapplies the password
-    // on every run, so a password written here would silently undo any rotation.
-    let password_plain = std::env::var("SEED_ADMIN_PASSWORD")
+    // From the environment, never a literal. A default here would be a credential
+    // committed in all but name, and one every deployment would share.
+    let password = std::env::var("SEED_ADMIN_PASSWORD")
         .map_err(|_| AppError::MissingEnv("SEED_ADMIN_PASSWORD".to_owned()))?;
 
-    let pool = db::connect(&Config::from_env()?.database_url).await?;
+    let config = Config::from_env()?;
+    let sheets = Sheets::new(&config.google_service_account, &config.spreadsheet_id)?;
 
-    sqlx::query(
-        "insert into users (email, username, password_hash, role, first_name, last_name)
-         values ($1, $2, $3, $4, $5, $6)
-         on conflict (email) do update set password_hash = excluded.password_hash",
+    store::users::create(
+        &sheets,
+        &CreateUser {
+            email: Some("you@example.com".to_owned()),
+            password,
+            role: Role::Admin,
+            first_name: "Your".to_owned(),
+            middle_name: None,
+            last_name: "Name".to_owned(),
+            username: Some("you".to_owned()),
+        },
     )
-    .bind("you@example.com")
-    .bind("you")
-    .bind(password::hash(&password_plain)?)
-    .bind(Role::Admin.as_str())
-    .bind("Your")
-    .bind("Name")
-    .execute(&pool)
     .await?;
 
     Ok(())
 }
 ```
+
+Re-running it reports an existing account as a bad request rather than overwriting it, because the uniqueness check is now in code and there is no upsert to reach for.
 
 > The Rust crate is named `dynavolt_api` for continuity with the deployment; the product is Vital. Renaming the crate is a separate, deploy-affecting change.
 
@@ -242,13 +252,48 @@ Where the app can schedule notifications itself, it posts a fresh one as each to
 
 - The data source is a runtime setting, not an environment variable, and it defaults to **hardware**. In hardware mode the API serves the newest hardware reading only while it is within a 30 second window; after that the dashboard reads "No data". A dashboard stuck on "No data" usually means the board has stopped reporting, not that the app is failing to refresh.
 - `SAMPLE_INTERVAL_MS` throttles writes, not the dashboard: the live view polls every second regardless. It defaults to 15s because a transformer's thermal behavior moves over minutes.
-- Migrations are embedded into the binary at compile time by `sqlx::migrate!`, so `build.rs` tells cargo to rebuild whenever `migrations/` changes. Without it, adding a migration and starting the dev server looks completely healthy and silently skips it.
-- Connections are capped at two per serverless instance and released after ten seconds idle. The session pooler allows fifteen clients in total, and an instance stays warm long after it stops serving: without a timeout, a handful of idle instances hold the entire budget and every cold start after that fails to build, returning 500 on every route including ones that never touch the database.
-- The database must be reached through a **session** pooler. sqlx names prepared statements per connection, so a transaction pooler multiplexes them onto shared backends and fails with `42P05 ... already exists` on about half of all requests.
 - After changing an environment variable on Vercel, deploy with `--force`. A cached build keeps the old environment.
 - Hardware ingest requires the `x-device-key` header to match the API's `DEVICE_API_KEY`; with no key set, ingest is rejected.
 - The grid here runs at **60 Hz**; the nominal supply is 230 V.
 - Times are stamped in UTC and rendered at UTC+8.
+
+## The spreadsheet as a database
+
+Everything lives in one Google Sheet, one tab per table. This is a deliberate choice and
+a set of deliberate losses, so they are written down rather than discovered.
+
+**Readings roll over monthly.** A sheet holds ten million cells, which at five second
+sampling is about forty days, so a single tab would simply stop accepting writes one
+afternoon. `readings-2026-08` and its successors keep every row and make the boundary
+predictable. A query spanning a boundary reads both tabs.
+
+**Reads are cached, and that is what makes it viable.** Google allows sixty requests a
+minute per caller and the dashboard polls once a second, so without a cache a single open
+app would sit exactly on the ceiling. One fetch now serves every dashboard for the length
+of the window. The cache is per warm instance, so the real rate is that window divided by
+the number of live instances.
+
+**The newest reading is found by reading the end of the tab**, not by sorting it, because
+sorting would mean pulling a quarter of a million rows to answer a question asked every
+second. That assumes the tab is in chronological order, which holds while the API is the
+only writer. Sorting a tab by hand in the browser breaks it.
+
+### What is no longer guaranteed
+
+Postgres enforced these; a spreadsheet has nothing to enforce them with. Each was
+accepted rather than overlooked.
+
+| Was | Now |
+|---|---|
+| One unacknowledged alert per kind, by unique index | Best effort. Two ingests can both raise, so one overload can push twice |
+| The re-notify claim, atomic under `for update skip locked` | Two callers can both claim. Sixty seconds is a floor on how often a phone is told, not a promise |
+| Acknowledge conditional on `acknowledged_at is null` | Read, edit, write. Two admins acknowledging both succeed and the later write wins |
+| Unique email and username, by index | Checked in code before writing. Two accounts created in the same second can both pass |
+| Duplicate insert returns 409 | Returns 400. There is no SQLSTATE to detect |
+| Ids from a sequence | Row position. Unique within a month tab, not across them |
+| Delete removes the row | The row is blanked. Tabs only grow, and reads skip blanks |
+| `where`, `order by`, `limit` in the database | In process, over the whole tab |
+| Sampling made exclusive by an advisory lock | `SAMPLE_INTERVAL_MS` is a floor, not a promise |
 
 ## Scripts
 
@@ -260,8 +305,10 @@ From `app/`:
 
 From `api/`:
 
-- `cargo run` starts the API and applies migrations
+- `cargo run` starts the API
+- `cargo run --bin sheets-check` reads the spreadsheet through the real store code, which is the quickest way to tell a bad share from a bad column order
 - `cargo run --bin seed` creates accounts, if you have added a seeder
+- `node scripts/seed-sheets.mjs <key.json> <export-dir> <spreadsheet-id>` loads an export into a fresh spreadsheet
 - `cargo test` runs the unit and property tests
 
 ## License

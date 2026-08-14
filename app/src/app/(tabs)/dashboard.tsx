@@ -6,6 +6,7 @@ import PlugsConnected from 'phosphor-react-native/src/icons/PlugsConnected';
 import Pulse from 'phosphor-react-native/src/icons/Pulse';
 import SignOut from 'phosphor-react-native/src/icons/SignOut';
 import Thermometer from 'phosphor-react-native/src/icons/Thermometer';
+import Warning from 'phosphor-react-native/src/icons/Warning';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -94,6 +95,9 @@ export default function DashboardScreen() {
   }, [data, reportLive]);
 
   const overload = data?.status === 'overload';
+  // A tenth of an amp is noise; this is well above it and well below any real load.
+  const contactsDisagree =
+    data?.relayClosed === false && (data.currentA ?? 0) >= 0.15;
   const hot = data?.overTemperature ?? false;
 
   // Recomputed each heartbeat, so the greeting rolls over with the clock.
@@ -194,6 +198,16 @@ export default function DashboardScreen() {
               <CardDescription>Status</CardDescription>
               <View className="flex-row items-center gap-1.5">
                 {renderSourceBadge()}
+                {/* The contacts, not the condition. A transformer reading NORMAL with
+                    the load disconnected is a very different situation from one reading
+                    NORMAL with the load running, and the two looked identical here. */}
+                {data && data.relayClosed !== null && data.relayClosed !== undefined ? (
+                  <Badge
+                    variant={data.relayClosed ? 'secondary' : 'destructive'}
+                    className={BADGE}>
+                    <Text>{data.relayClosed ? 'LOAD ON' : 'LOAD OFF'}</Text>
+                  </Badge>
+                ) : null}
                 <Badge variant={overload ? 'destructive' : 'default'} className={BADGE}>
                   <Text>{overload ? 'OVERLOAD' : 'NORMAL'}</Text>
                 </Badge>
@@ -257,6 +271,32 @@ export default function DashboardScreen() {
             },
           ]}
         />
+
+        {/* Current flowing through contacts that are meant to be open. The board says
+            the relay is off, the meter says the load is still drawing, and only one of
+            them can be right: the reading is a measurement and the state is a belief,
+            so the reading wins. Usually a welded contact, which is the failure that
+            makes a protection scheme decorative. */}
+        {contactsDisagree ? (
+          <View
+            className="flex-row items-center gap-3 rounded-xl border p-3"
+            style={{ borderColor: `${danger}40`, backgroundColor: `${danger}14` }}>
+            <View
+              className="h-9 w-9 items-center justify-center rounded-full"
+              style={{ backgroundColor: `${danger}26` }}>
+              <Warning size={18} weight="fill" color={danger} />
+            </View>
+            <View className="flex-1 gap-0.5">
+              <Text className="text-sm font-semibold" style={{ color: danger }}>
+                Relay may be stuck
+              </Text>
+              <Text variant="muted" className="text-xs">
+                The relay reports open, but {formatValue(data?.currentA ?? null, 2)} A is
+                still flowing. Treat the load as live and check the contacts.
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         {hot ? (
           <View

@@ -1,0 +1,23 @@
+# Repository-wide ignores.
+#
+# The per-project ignores live in api/ and app/. This file covers the root, which had
+# none: anything dropped beside the three project folders was untracked and therefore
+# one `git add .` away from a public repository.
+
+# Service account keys and other credential files.
+#
+# A key is not recoverable once pushed, only revocable, and this repository is public.
+key/
+*-service-account*.json
+gcp-*.json
+credentials.json
+
+# Database dumps. They carry password hashes and every reading ever taken.
+*.dump
+*.sql.gz
+backup/
+backups/
+*-backup-*/
+
+# Windows shortcut files, which carry the machine name of whoever made them.
+*.lnk

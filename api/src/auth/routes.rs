@@ -14,8 +14,9 @@ use uuid::Uuid;
 use crate::auth::extract::AuthUser;
 use crate::auth::{Role, jwt, password};
 use crate::error::{AppError, AppResult};
+use crate::sheets::store;
 use crate::state::AppState;
-use crate::users::model::{clean_optional, clean_username};
+use crate::users::model::{UpdateUser, User, clean_username};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,16 +46,18 @@ pub struct UserResponse {
 }
 
 impl UserResponse {
-    fn from_credentials(found: Credentials, role: Role) -> Self {
+    /// The role is taken as an argument rather than reparsed from the row, so the
+    /// caller that already validated it does not have to handle the failure twice.
+    fn from_user(user: User, role: Role) -> Self {
         Self {
-            id: found.id,
-            email: found.email,
-            username: found.username,
+            id: user.id,
+            email: user.email,
+            username: user.username,
             role,
-            full_name: found.full_name,
-            first_name: found.first_name,
-            middle_name: found.middle_name,
-            last_name: found.last_name,
+            full_name: user.full_name,
+            first_name: user.first_name,
+            middle_name: user.middle_name,
+            last_name: user.last_name,
         }
     }
 }
@@ -64,33 +67,6 @@ impl UserResponse {
 pub struct LoginResponse {
     pub token: String,
     pub user: UserResponse,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct Credentials {
-    id: Uuid,
-    email: Option<String>,
-    username: String,
-    password_hash: String,
-    role: String,
-    first_name: String,
-    middle_name: Option<String>,
-    last_name: String,
-    full_name: String,
-}
-
-/// Shared tail of every account lookup. `concat!` keeps the SQL a compile-time
-/// literal, so no query is ever assembled from runtime strings.
-macro_rules! credentials_select {
-    ($predicate:literal) => {
-        concat!(
-            "select id, email, username, password_hash, role,
-                    first_name, middle_name, last_name,
-                    trim(concat_ws(' ', first_name, middle_name, last_name)) as full_name
-             from users where ",
-            $predicate
-        )
-    };
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,14 +139,12 @@ async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> AppResult<Json<LoginResponse>> {
-    // Email is stored lowercased and usernames are always lowercase, so one
-    // lowercased needle matches either column.
+    // Lowercased for the log line below as much as for the lookup: the store matches
+    // case insensitively either way, but the warnings should read the same whatever
+    // case the caller typed, or the same guessing run looks like several.
     let identifier = body.identifier.trim().to_lowercase();
 
-    let found = sqlx::query_as::<_, Credentials>(credentials_select!("email = $1 or username = $1"))
-        .bind(&identifier)
-        .fetch_optional(&state.pool)
-        .await?;
+    let found = store::users::find_by_identifier(&state.sheets, &identifier).await?;
 
     // When no account matches, still spend one argon2 verification against a dummy
     // hash so timing does not reveal which accounts exist.
@@ -188,7 +162,7 @@ async fn login(
         return Err(AppError::InvalidCredentials);
     }
 
-    let role: Role = found.role.parse()?;
+    let role: Role = found.user.role.parse()?;
 
     // Checked only after the password, so a wrong portal on a bad password still
     // reads "invalid credentials" and reveals neither the account nor its role.
@@ -199,24 +173,22 @@ async fn login(
         return Err(AppError::PortalMismatch(role));
     }
 
-    let token = jwt::encode(&state.jwt_secret, found.id, role)?;
+    let token = jwt::encode(&state.jwt_secret, found.user.id, role)?;
 
     Ok(Json(LoginResponse {
         token,
-        user: UserResponse::from_credentials(found, role),
+        user: UserResponse::from_user(found.user, role),
     }))
 }
 
 async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {
-    let found = sqlx::query_as::<_, Credentials>(credentials_select!("id = $1"))
-        .bind(auth.id)
-        .fetch_optional(&state.pool)
+    let found = store::users::find_by_id(&state.sheets, auth.id)
         .await?
         .ok_or(AppError::NotFound)?;
 
-    let role: Role = found.role.parse()?;
+    let role: Role = found.user.role.parse()?;
 
-    Ok(Json(UserResponse::from_credentials(found, role)))
+    Ok(Json(UserResponse::from_user(found.user, role)))
 }
 
 /// Resolves the email bind for a profile update. `None` leaves it unchanged. Names
@@ -285,39 +257,46 @@ async fn update_me(
         return Err(AppError::BadRequest("Last name is required".to_owned()));
     }
 
-    let current = sqlx::query_as::<_, Credentials>(credentials_select!("id = $1"))
-        .bind(auth.id)
-        .fetch_optional(&state.pool)
+    // Read first, then write. There is no single statement that edits a row in place
+    // any more, so the account is fetched to learn what the edit must preserve.
+    let current = store::users::find_by_id(&state.sheets, auth.id)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::NotFound)?
+        .user;
 
     let is_admin = auth.role.is_admin();
     let email = resolve_email(is_admin, body.email.as_deref(), current.email.as_deref())?;
     let username = resolve_username(is_admin, body.username.as_deref(), &current.username)?;
 
-    // RETURNING reflects the new values, so full_name is composed post-update.
-    let found = sqlx::query_as::<_, Credentials>(
-        "update users
-         set first_name = $1, middle_name = $2, last_name = $3,
-             email = coalesce($4, email), username = coalesce($5, username)
-         where id = $6
-         returning id, email, username, password_hash, role,
-                   first_name, middle_name, last_name,
-                   trim(concat_ws(' ', first_name, middle_name, last_name)) as full_name",
-    )
-    .bind(body.first_name.trim())
-    .bind(clean_optional(body.middle_name.as_deref()))
-    .bind(body.last_name.trim())
-    .bind(email)
-    .bind(username)
-    .bind(auth.id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    // The account's own role goes back in unchanged. The edit rewrites the whole row,
+    // so omitting it would blank the cell and quietly demote whoever saved a profile.
+    let role: Role = current.role.parse()?;
 
-    let role: Role = found.role.parse()?;
+    // `None` from the resolvers means "leave it alone", which the SQL said with
+    // `coalesce($4, email)`. The store rewrites every column, so an unchanged email has
+    // to be carried across by hand or it would be cleared. A blank username needs no
+    // such care: the store already keeps the stored one for an absent value.
+    //
+    // Between the read above and this write, another request can change the same row,
+    // and the later write wins whole. Postgres settled that inside one statement.
+    let edit = UpdateUser {
+        email: email.or(current.email),
+        role,
+        first_name: body.first_name,
+        middle_name: body.middle_name,
+        last_name: body.last_name,
+        username,
+        // Absent leaves the hash alone. Changing a password is `/auth/password`, which
+        // asks for the current one first.
+        password: None,
+    };
 
-    Ok(Json(UserResponse::from_credentials(found, role)))
+    // An email or username an admin moves onto another account's value now comes back
+    // as a 400 from the store's own check. It used to be a 409 raised by the unique
+    // index, which was also the only thing guarding this path.
+    let updated = store::users::update(&state.sheets, auth.id, &edit).await?;
+
+    Ok(Json(UserResponse::from_user(updated, role)))
 }
 
 async fn change_password(
@@ -331,9 +310,7 @@ async fn change_password(
         ));
     }
 
-    let found = sqlx::query_as::<_, Credentials>(credentials_select!("id = $1"))
-        .bind(auth.id)
-        .fetch_optional(&state.pool)
+    let found = store::users::find_by_id(&state.sheets, auth.id)
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -343,11 +320,7 @@ async fn change_password(
         return Err(AppError::InvalidCredentials);
     }
 
-    sqlx::query("update users set password_hash = $1 where id = $2")
-        .bind(password::hash(&body.new_password)?)
-        .bind(auth.id)
-        .execute(&state.pool)
-        .await?;
+    store::users::set_password(&state.sheets, auth.id, &body.new_password).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

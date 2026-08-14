@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Alert {
     pub id: i64,
@@ -26,7 +26,7 @@ pub struct Alert {
 /// Every measurement is optional twice over: the join is a left join because an alert
 /// can outlive its reading, and a board without a PZEM reports only some fields even
 /// when the reading is there.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AlertWithReading {
     pub id: i64,

@@ -63,6 +63,12 @@ pub struct ReadingInput {
     pub frequency_hz: Option<f64>,
     #[serde(default)]
     pub energy_kwh: Option<f64>,
+    /// Whether the relay was passing load when this was measured.
+    ///
+    /// Reported by the board rather than inferred, because inferring it from zero amps
+    /// cannot tell an open contact from a load that is simply switched off.
+    #[serde(default)]
+    pub relay_closed: Option<bool>,
 }
 
 impl ReadingInput {
@@ -77,6 +83,7 @@ impl ReadingInput {
             power_factor: None,
             frequency_hz: None,
             energy_kwh: None,
+            relay_closed: None,
         }
     }
 
@@ -91,6 +98,7 @@ impl ReadingInput {
             power_factor: None,
             frequency_hz: None,
             energy_kwh: None,
+            relay_closed: None,
         }
     }
 
@@ -101,6 +109,8 @@ impl ReadingInput {
     /// count toward `total`, occupy pages of the log, and drag every average in the
     /// trend toward a value nobody measured.
     #[must_use]
+    /// Deliberately ignores the relay position. A contact state is not a measurement of
+    /// the transformer, so a payload carrying only that still has nothing to record.
     pub const fn is_empty(&self) -> bool {
         self.voltage_v.is_none()
             && self.current_a.is_none()
@@ -112,10 +122,11 @@ impl ReadingInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reading {
     pub id: i64,
+    pub relay_closed: Option<bool>,
     pub voltage_v: Option<f64>,
     pub current_a: Option<f64>,
     pub temperature_c: Option<f64>,
@@ -162,6 +173,8 @@ pub struct LiveReading {
     pub simulated: bool,
     /// True when a hardware reading arrived inside the connected window.
     pub connected: bool,
+    /// Whether the relay is passing load, as of the newest reading.
+    pub relay_closed: Option<bool>,
     /// The board's address on its own network, when it has reported one.
     ///
     /// Here rather than only on `/device/status`, which is admin only, because every
@@ -183,7 +196,7 @@ pub fn reactive_power(apparent_power_va: Option<f64>, power_w: Option<f64>) -> O
     }
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrendPoint {
     pub day: DateTime<Utc>,

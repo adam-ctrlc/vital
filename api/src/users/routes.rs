@@ -8,11 +8,10 @@ use uuid::Uuid;
 use crate::auth::Role;
 use crate::auth::extract::AdminUser;
 use crate::error::{AppError, AppResult};
-use crate::search;
+use crate::sheets::store;
 use crate::state::AppState;
 use crate::users::model::{
     CreateUser, SuggestUsername, UpdateUser, User, UsernameSuggestion, clean_optional,
-    clean_username,
 };
 use crate::users::service;
 
@@ -53,25 +52,13 @@ async fn list(
         return Err(AppError::BadRequest(format!("invalid role: {role}")));
     }
 
-    let users = sqlx::query_as::<_, User>(
-        "select id, email, username, role, first_name, middle_name, last_name,
-                trim(concat_ws(' ', first_name, middle_name, last_name)) as full_name,
-                created_at
-         from users
-         where ($1::text is null or role = $1)
-           and ($2::text is null
-                or email ilike '%' || $2 || '%'
-                or username ilike '%' || $2 || '%'
-                or first_name ilike '%' || $2 || '%'
-                or middle_name ilike '%' || $2 || '%'
-                or last_name ilike '%' || $2 || '%'
-                or trim(concat_ws(' ', first_name, middle_name, last_name)) ilike '%' || $2 || '%')
-         order by created_at",
-    )
-    .bind(role)
-    .bind(filter(query.q).map(|needle| search::escape_like(&needle)))
-    .fetch_all(&state.pool)
-    .await?;
+    // The needle goes to the store exactly as it was typed. `search::escape_like` was
+    // there because ILIKE read `%` and `_` as wildcards; the store matches with
+    // `contains`, so escaping first would make a search for a literal percent sign look
+    // for a backslash that nobody's name contains.
+    let needle = filter(query.q);
+
+    let users = store::users::list(&state.sheets, role.as_deref(), needle.as_deref()).await?;
 
     Ok(Json(users))
 }
@@ -82,7 +69,8 @@ async fn username_suggestion(
     _admin: AdminUser,
     Query(query): Query<SuggestUsername>,
 ) -> AppResult<Json<UsernameSuggestion>> {
-    let username = service::suggest_username(&state.pool, &query.first_name, &query.last_name).await?;
+    let username =
+        service::suggest_username(&state.sheets, &query.first_name, &query.last_name).await?;
 
     Ok(Json(UsernameSuggestion { username }))
 }
@@ -110,31 +98,16 @@ async fn create(
         return Err(AppError::BadRequest("last name is required".to_owned()));
     }
 
-    let taken: Option<Uuid> = sqlx::query_scalar("select id from users where email = $1")
-        .bind(email.clone())
-        .fetch_optional(&state.pool)
-        .await?;
-
-    if taken.is_some() {
-        return Err(AppError::BadRequest("email already registered".to_owned()));
-    }
-
-    // Only a username the admin typed is checked here; a blank one is generated in
-    // the service, and the formula only ever returns a free name.
-    if let Some(username) = body.username.as_deref().map(clean_username)
-        && !username.is_empty()
-    {
-        let clash: Option<Uuid> = sqlx::query_scalar("select id from users where username = $1")
-            .bind(&username)
-            .fetch_optional(&state.pool)
-            .await?;
-
-        if clash.is_some() {
-            return Err(AppError::BadRequest("username already taken".to_owned()));
-        }
-    }
-
-    service::create(&state.pool, &body).await?;
+    // The email and username collision checks used to be two queries here, ahead of the
+    // insert, with a unique index behind them to catch anything that slipped through in
+    // between. The store now runs both against the rows it is about to append to, which
+    // is one read instead of two and keeps the same messages. What is gone is the index:
+    // two admins adding an account in the same second can both pass the check and both
+    // be appended, so this is a check followed by a write rather than one atomic act.
+    //
+    // That also means a duplicate is now always a 400 from the check. It used to be able
+    // to come back as a 409 when the index caught the race instead.
+    service::create(&state.sheets, &body).await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -166,19 +139,17 @@ async fn update(
     }
 
     // NotFound before the role guard, so a missing id never reads as a role error.
-    let current_role: String = sqlx::query_scalar("select role from users where id = $1")
-        .bind(id)
-        .fetch_optional(&state.pool)
+    let current = store::users::find_by_id(&state.sheets, id)
         .await?
         .ok_or(AppError::NotFound)?;
 
-    if admin.0.id == id && body.role.as_str() != current_role {
+    if admin.0.id == id && body.role.as_str() != current.user.role {
         return Err(AppError::BadRequest(
             "you cannot change your own role".to_owned(),
         ));
     }
 
-    let user = service::update(&state.pool, id, &body).await?;
+    let user = service::update(&state.sheets, id, &body).await?;
 
     Ok(Json(user))
 }
@@ -195,9 +166,7 @@ async fn remove(
     }
 
     // NotFound before the role guard, so a missing id never reads as a role error.
-    let target_role: String = sqlx::query_scalar("select role from users where id = $1")
-        .bind(id)
-        .fetch_optional(&state.pool)
+    let target = store::users::find_by_id(&state.sheets, id)
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -206,21 +175,15 @@ async fn remove(
     // other, and the last one standing can be deleted by nobody but themselves, which
     // they cannot do either. Requiring an admin account to be demoted before it can be
     // removed makes losing admin access a deliberate two-step act rather than one tap.
-    if target_role == Role::Admin.as_str() {
+    if target.user.role == Role::Admin.as_str() {
         return Err(AppError::BadRequest(
             "an admin cannot be deleted. Change the role to user first".to_owned(),
         ));
     }
 
-    let affected = sqlx::query("delete from users where id = $1")
-        .bind(id)
-        .execute(&state.pool)
-        .await?
-        .rows_affected();
-
-    if affected == 0 {
-        return Err(AppError::NotFound);
-    }
+    // The store raises NotFound when the row is already gone, which is what the zero
+    // rows-affected check did.
+    store::users::delete(&state.sheets, id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

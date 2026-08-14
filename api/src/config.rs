@@ -9,12 +9,19 @@ const DEFAULT_SAMPLE_INTERVAL_MS: i64 = 15_000;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub database_url: String,
     pub jwt_secret: String,
     pub port: u16,
     pub simulator_enabled: bool,
     pub sample_interval_ms: i64,
     pub device_api_key: Option<String>,
+    /// The service account JSON, verbatim.
+    ///
+    /// An environment variable rather than a file: there is nowhere to put a file on a
+    /// serverless deploy, and a key committed beside the code is how keys reach public
+    /// history.
+    pub google_service_account: String,
+    /// The spreadsheet standing in for the database.
+    pub spreadsheet_id: String,
 }
 
 fn required(key: &str) -> AppResult<String> {
@@ -45,12 +52,13 @@ fn optional_secret(raw: Option<String>) -> Option<String> {
 impl Config {
     pub fn from_env() -> AppResult<Self> {
         Ok(Self {
-            database_url: required("DATABASE_URL")?,
             jwt_secret: required("JWT_SECRET")?,
             port: parsed("PORT", 8080)?,
             simulator_enabled: parsed("SIMULATOR_ENABLED", true)?,
             sample_interval_ms: parsed("SAMPLE_INTERVAL_MS", DEFAULT_SAMPLE_INTERVAL_MS)?,
             device_api_key: optional_secret(std::env::var("DEVICE_API_KEY").ok()),
+            google_service_account: required("GOOGLE_SERVICE_ACCOUNT")?,
+            spreadsheet_id: required("SHEETS_SPREADSHEET_ID")?,
         })
     }
 }

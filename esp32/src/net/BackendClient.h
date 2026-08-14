@@ -20,9 +20,11 @@ class BackendClient {
     float loadThresholdVa = NAN;
     float tripThresholdVa = NAN;
     float tempThresholdC = NAN;
+    /// An operator has asked for a locked out relay to be closed again.
+    bool resetRelay = false;
   };
 
-  HeartbeatResult postHeartbeat() {
+  HeartbeatResult postHeartbeat(bool lockedOut) {
     HeartbeatResult result;
     if (WiFi.status() != WL_CONNECTED) return result;
 
@@ -36,6 +38,9 @@ class BackendClient {
     doc["ipAddress"] = WiFi.localIP().toString();
     doc["signalDbm"] = (int)WiFi.RSSI();
     doc["uptimeSeconds"] = (unsigned long)(millis() / 1000);
+    // Reported so an operator can see the load is off on purpose rather than the board
+    // having died, which look identical from the outside.
+    doc["relayLockedOut"] = lockedOut;
 
     String body;
     serializeJson(doc, body);
@@ -59,6 +64,7 @@ class BackendClient {
         result.loadThresholdVa = ack["loadThresholdVa"] | NAN;
         result.tripThresholdVa = ack["tripThresholdVa"] | NAN;
         result.tempThresholdC = ack["tempThresholdC"] | NAN;
+        result.resetRelay = ack["resetRelay"] | false;
       }
     }
     http.end();
@@ -67,7 +73,7 @@ class BackendClient {
   }
 
   bool postReading(float voltage, float current, float temperature,
-                   float power, float pf, float frequency, float energy) {
+                   float power, float pf, float frequency, float energy, bool relayClosed) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     JsonDocument doc;
@@ -84,6 +90,11 @@ class BackendClient {
       Serial.println("no readings to send, skipping post.");
       return false;
     }
+
+    // Added after the emptiness check on purpose. A contact position is not a
+    // measurement, so a payload carrying only this is still nothing to record and the
+    // backend would rightly refuse it.
+    doc["relayClosed"] = relayClosed;
 
     String body;
     serializeJson(doc, body);

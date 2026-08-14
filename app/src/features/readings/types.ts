@@ -6,6 +6,13 @@ type MeterFields = {
   powerFactor: number | null;
   frequencyHz: number | null;
   energyKwh: number | null;
+  /**
+   * Whether the relay was passing load when this was measured.
+   *
+   * Null for a simulated reading, which has no contacts, and for anything recorded
+   * before the board started reporting it.
+   */
+  relayClosed?: boolean | null;
 };
 
 export type LiveReading = MeterFields & {
@@ -37,6 +44,8 @@ export type LiveReading = MeterFields & {
    * travel through the backend and back.
    */
   deviceIp?: string | null;
+  /** Whether the relay is passing load, as of the newest reading. */
+  relayClosed?: boolean | null;
   recordedAt: string;
 };
 

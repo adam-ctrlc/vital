@@ -13,7 +13,7 @@ async fn main() -> AppResult<()> {
         .init();
 
     let config = Config::from_env()?;
-    let app = dynavolt_api::build_for_dev(&config).await?;
+    let app = dynavolt_api::build(&config).await?;
 
     let address = format!("0.0.0.0:{}", config.port);
     let listener = tokio::net::TcpListener::bind(&address).await?;

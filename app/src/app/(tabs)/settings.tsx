@@ -13,6 +13,7 @@ import { KeyboardAvoidingView, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DeviceCard } from '@/components/ac/device-card';
+import { RelayCard } from '@/components/ac/relay-card';
 import { SourceModeModal } from '@/components/source-mode-modal';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,9 +28,9 @@ import type { SourceMode } from '@/features/settings/types';
 import { usePoll } from '@/hooks/use-poll';
 import { useAppearance } from '@/lib/appearance';
 
-type Thresholds = { load: string; trip: string; temp: string };
+type Thresholds = { load: string; trip: string; temp: string; reclose: string };
 
-const EMPTY: Thresholds = { load: '', trip: '', temp: '' };
+const EMPTY: Thresholds = { load: '', trip: '', temp: '', reclose: '' };
 
 const SOURCE_OPTIONS: { label: string; value: SourceMode }[] = [
   { label: 'Simulation', value: 'simulation' },
@@ -74,6 +75,7 @@ export default function SettingsScreen() {
         load: String(current.loadThresholdVa),
         trip: String(current.tripThresholdVa),
         temp: String(current.tempThresholdC),
+        reclose: String(current.recloseDelaySeconds ?? 30),
       };
       setSaved(next);
       setDraft(next);
@@ -158,7 +160,6 @@ export default function SettingsScreen() {
     const load = Number(draft.load);
     const trip = Number(draft.trip);
     const temp = Number(draft.temp);
-
     const positive = [load, trip, temp].every((value) => Number.isFinite(value) && value > 0);
     if (!positive) {
       setError('Enter a positive number for every threshold');
@@ -176,11 +177,12 @@ export default function SettingsScreen() {
     setError(null);
     setStatus(null);
     try {
-      const result = await settingsApi.update(token ?? '', load, trip, temp);
+      const result = await settingsApi.update(token ?? '', load, trip, temp, Number(saved.reclose));
       const next = {
         load: String(result.loadThresholdVa),
         trip: String(result.tripThresholdVa),
         temp: String(result.tempThresholdC),
+        reclose: String(result.recloseDelaySeconds ?? 30),
       };
       setSaved(next);
       setDraft(next);
@@ -194,7 +196,10 @@ export default function SettingsScreen() {
   }
 
   const dirty =
-    draft.load !== saved.load || draft.trip !== saved.trip || draft.temp !== saved.temp;
+    draft.load !== saved.load ||
+    draft.trip !== saved.trip ||
+    draft.temp !== saved.temp ||
+    draft.reclose !== saved.reclose;
 
   // Hiding the tab in the layout only removes the button; the route stays registered,
   // so `dynavolt://settings` still lands here. The API enforces this too; the redirect
@@ -305,6 +310,7 @@ export default function SettingsScreen() {
               )}
             </View>
 
+
             {error ? <Text className="text-destructive text-sm">{error}</Text> : null}
             {status ? <Text className="text-primary text-sm">{status}</Text> : null}
 
@@ -322,6 +328,8 @@ export default function SettingsScreen() {
             ) : null}
           </CardContent>
         </Card>
+
+        <RelayCard />
 
         <Card className="gap-0 py-0">
           <CardHeader className="border-border border-b p-4">

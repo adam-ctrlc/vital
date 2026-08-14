@@ -83,7 +83,7 @@ pub fn router() -> Router<AppState> {
 
 /// Dashboard heartbeat. Poll this as fast as you like.
 async fn latest(State(state): State<AppState>, _auth: AuthUser) -> AppResult<Json<LiveReading>> {
-    let reading = service::live(&state.pool, state.sample_interval_ms).await?;
+    let reading = service::live(&state.sheets, state.sample_interval_ms).await?;
 
     Ok(Json(reading))
 }
@@ -110,8 +110,8 @@ async fn ingest(
     in_range(body.energy_kwh, ENERGY_RANGE, "energy")?;
     in_range(body.power_factor, POWER_FACTOR_RANGE, "power factor")?;
 
-    let settings = crate::settings::service::load(&state.pool).await?;
-    let reading = service::record(&state.pool, body, "hardware", &settings).await?;
+    let settings = crate::settings::service::load(&state.sheets).await?;
+    let reading = service::record(&state.sheets, body, "hardware", &settings).await?;
 
     Ok(Json(reading))
 }
@@ -137,45 +137,36 @@ async fn history(
         }
     }
 
-    // Counted separately so `total` covers every match, not just this window.
-    let total: i64 = sqlx::query_scalar(
-        "select count(*) from readings
-         where ($1::text is null or status = $1)
-           and ($2::text is null
-                or status ilike '%' || $2 || '%'
-                or source ilike '%' || $2 || '%'
-                or round(apparent_power_va::numeric)::text ilike '%' || $2 || '%'
-                or to_char(recorded_at + interval '8 hours', 'YYYY-MM-DD HH24:MI') ilike '%' || $2 || '%')
-           and ($3::text is null or source = $3)",
-    )
-    .bind(status.clone())
-    .bind(q.clone())
-    .bind(source.clone())
-    .fetch_one(&state.pool)
-    .await?;
+    // Ninety days back, which is the furthest the trend endpoint looks and therefore
+    // the furthest anything asks for. Reading every month ever recorded to answer a
+    // twenty row page would get slower for the rest of the system's life.
+    let to = chrono::Utc::now();
+    let from = to - chrono::Duration::days(90);
 
-    // The searchable timestamp is rendered at UTC+8 so a query matches what the app shows.
-    let rows = sqlx::query_as::<_, Reading>(
-        "select id, voltage_v, current_a, temperature_c, apparent_power_va, status, source,
-                power_w, power_factor, frequency_hz, energy_kwh, recorded_at
-         from readings
-         where ($1::text is null or status = $1)
-           and ($2::text is null
-                or status ilike '%' || $2 || '%'
-                or source ilike '%' || $2 || '%'
-                or round(apparent_power_va::numeric)::text ilike '%' || $2 || '%'
-                or to_char(recorded_at + interval '8 hours', 'YYYY-MM-DD HH24:MI') ilike '%' || $2 || '%')
-           and ($3::text is null or source = $3)
-         order by recorded_at desc
-         limit $4 offset $5",
-    )
-    .bind(status)
-    .bind(q)
-    .bind(source)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.pool)
-    .await?;
+    let mut matching: Vec<Reading> = crate::sheets::store::readings::between(&state.sheets, from, to)
+        .await?
+        .into_iter()
+        .filter(|reading| status.as_deref().is_none_or(|wanted| reading.status == wanted))
+        .filter(|reading| source.as_deref().is_none_or(|wanted| reading.source == wanted))
+        .filter(|reading| {
+            // The raw needle, not an escaped one. `escape_like` exists for LIKE, and
+            // escaping first would make a search for a literal percent sign look for
+            // the backslash the escape added.
+            q.as_deref()
+                .is_none_or(|needle| crate::sheets::store::readings::matches(reading, needle))
+        })
+        .collect();
+
+    // Newest first, which is what the SQL ordering gave and what the logs screen shows.
+    matching.sort_by(|left, right| right.recorded_at.cmp(&left.recorded_at));
+
+    let total = i64::try_from(matching.len()).unwrap_or(i64::MAX);
+    let rows: Vec<Reading> = matching
+        .into_iter()
+        .skip(usize::try_from(offset).unwrap_or(0))
+        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+        .collect();
+
 
     Ok(Json(Page::new(rows, total, limit, offset)))
 }
@@ -187,20 +178,50 @@ async fn trend(
 ) -> AppResult<Json<Vec<TrendPoint>>> {
     let days = query.days.clamp(1, 90);
 
-    let points = sqlx::query_as::<_, TrendPoint>(
-        "select date_trunc('day', recorded_at) as day,
-                avg(apparent_power_va) as avg_power_va,
-                max(apparent_power_va) as max_power_va,
-                avg(temperature_c) as avg_temperature_c,
-                count(*) as samples
-         from readings
-         where recorded_at >= now() - ($1 || ' days')::interval
-         group by 1
-         order by 1",
-    )
-    .bind(days.to_string())
-    .fetch_all(&state.pool)
-    .await?;
+    let to = chrono::Utc::now();
+    let from = to - chrono::Duration::days(i64::from(days));
+    let readings = crate::sheets::store::readings::between(&state.sheets, from, to).await?;
+
+    // Bucketed at UTC+8 rather than UTC. The SQL grouped by `date_trunc('day', ...)` in
+    // UTC while every screen renders at UTC+8, so each bar mixed sixteen hours of one
+    // local day with eight of the previous one. Doing it here is the first chance to
+    // group by the day a person would actually name.
+    let mut buckets: std::collections::BTreeMap<String, Vec<&Reading>> = std::collections::BTreeMap::new();
+    for reading in &readings {
+        let local = reading.recorded_at + chrono::Duration::hours(8);
+        buckets
+            .entry(local.format("%Y-%m-%d").to_string())
+            .or_default()
+            .push(reading);
+    }
+
+    let points: Vec<TrendPoint> = buckets
+        .into_iter()
+        .map(|(day, group)| {
+            let loads: Vec<f64> = group.iter().filter_map(|r| r.apparent_power_va).collect();
+            let temps: Vec<f64> = group.iter().filter_map(|r| r.temperature_c).collect();
+            let mean = |values: &[f64]| {
+                (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
+            };
+
+            TrendPoint {
+                // Midnight of the local day, expressed back in UTC, so the client keeps
+                // receiving a timestamp rather than having to parse a label.
+                day: chrono::DateTime::parse_from_rfc3339(&format!("{day}T00:00:00+08:00"))
+                    .map(|parsed| parsed.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                avg_power_va: mean(&loads),
+                // A day whose readings all lacked power leaves both null rather than
+                // zero, which is the distinction migration 0011 introduced.
+                max_power_va: loads.iter().copied().fold(None::<f64>, |best, value| {
+                    Some(best.map_or(value, |current: f64| current.max(value)))
+                }),
+                avg_temperature_c: mean(&temps),
+                samples: i64::try_from(group.len()).unwrap_or(i64::MAX),
+            }
+        })
+        .collect();
+
 
     Ok(Json(points))
 }

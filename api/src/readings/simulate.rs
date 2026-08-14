@@ -44,6 +44,9 @@ pub fn at(unix_ms: i64) -> ReadingInput {
         power_factor: Some(power_factor),
         frequency_hz: Some(frequency_hz),
         energy_kwh: Some(energy_kwh),
+        // The simulator has no contacts. Null rather than a guess, so a simulated run
+        // never claims a relay position that no relay held.
+        relay_closed: None,
     }
 }
 

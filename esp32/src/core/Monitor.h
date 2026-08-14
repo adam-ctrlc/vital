@@ -50,9 +50,13 @@ class Monitor {
   /// and close straight into the fault it had just disconnected. The lockout restarts
   /// from now rather than resuming, which is the conservative direction: it waits the
   /// full window again instead of assuming time served.
-  void restoreTrip(unsigned long now) {
+  void restoreTrip(unsigned long now, bool wasLockedOut = false) {
     status = STATUS_OVERLOAD;
     trippedAt = now;
+    // A lockout that did not survive the reboot would auto-close into the fault it was
+    // holding open, which is the one outcome the lockout exists to prevent.
+    lockedOut = wasLockedOut;
+    attempts = wasLockedOut ? MAX_RECLOSE_ATTEMPTS : 0;
     applyRelay();
   }
 
@@ -69,6 +73,52 @@ class Monitor {
 
   /// The current status, spelled the same way the serial log and the backend spell it.
   const char *statusLabel() { return statusName(); }
+
+  /// Open, out of attempts, and waiting for a person.
+  bool isLockedOut() const { return lockedOut; }
+
+  /// Reclose attempts spent on the current run, for the display and the backend.
+  uint8_t recloseAttempts() const { return attempts; }
+
+  /// Clears a lockout and lets the machine try again.
+  ///
+  /// The only way out of a lockout, and deliberately not something the board can decide
+  /// for itself: it locked out precisely because it cannot tell whether the fault is
+  /// still there. Somebody has to go and look.
+  void resetLockout(unsigned long now) {
+    if (!lockedOut && attempts == 0) return;
+
+    // Refused, not queued. An operator whose close was undone a moment ago is asking
+    // again before the board has finished deciding, and honouring that turns a
+    // protection scheme into a switch that argues.
+    if (manualBlockedUntil != 0 && (long)(now - manualBlockedUntil) < 0) {
+      Serial.println("relay close refused, still within the retry wait");
+      return;
+    }
+
+    Serial.println("relay lockout cleared by an operator");
+    lockedOut = false;
+    attempts = 0;
+    closedAt = 0;
+    manualClosedAt = now;
+    // Backdated so the reclose is not made to wait out a fresh delay on top of however
+    // long it has already been sitting open.
+    trippedAt = now - RECLOSE_DELAY_MS;
+  }
+
+  /// True while an operator's close request would be refused.
+  bool manualHeld(unsigned long now) const {
+    return manualBlockedUntil != 0 && (long)(now - manualBlockedUntil) < 0;
+  }
+
+  /// The contacts are open and current is still flowing through them.
+  ///
+  /// Acted on by re-driving the output, then reported if it persists. A pin that never
+  /// took the write is recoverable and worth retrying; a contact welded shut is not,
+  /// and the only thing left for that one is to tell somebody.
+  bool contactsStuck() const {
+    return !relay.isClosed() && !isnan(current) && current >= STUCK_CONTACT_AMPS;
+  }
 
   /// Whether the relay is passing load, for anything reporting the board's state.
   bool relayClosed() const { return relay.isClosed(); }
@@ -110,7 +160,40 @@ class Monitor {
 
   static constexpr unsigned long SAMPLE_INTERVAL_MS = 1000;
   static constexpr unsigned long TRIP_CONFIRM_MS = 3000;
-  static constexpr unsigned long RECLOSE_LOCKOUT_MS = 30000;
+
+  /// How long the contacts stay open before each reclose attempt.
+  ///
+  /// The same wait every time rather than a growing one. Backing off sounds prudent but
+  /// stretches the run: a load that is genuinely too big would be re-energised over
+  /// several minutes before the board gave up, and every one of those attempts is
+  /// another inrush into a fault nobody has fixed. A fixed wait reaches the lockout
+  /// quickly and leaves it there.
+  static constexpr unsigned long RECLOSE_DELAY_MS = 30000;
+
+  /// Attempts before the board gives up and stays open.
+  ///
+  /// Opening the relay removes the current it is judging, so 0 VA means "nothing is
+  /// flowing", not "the fault is gone". The only way to find out is to close and look,
+  /// and the only way that is not an endless cycle is to bound how often it may ask.
+  static constexpr uint8_t MAX_RECLOSE_ATTEMPTS = 3;
+
+  /// How long an operator must wait before asking again after their close was undone.
+  ///
+  /// Short deliberately: this is not protection, it is a guard against a request being
+  /// repeated faster than the board can act on it. The protection is that the overload
+  /// re-opens the contacts regardless of who closed them.
+  static constexpr unsigned long MANUAL_RETRY_MS = 3000;
+
+  /// Current above this, with the contacts open, means they are not really open.
+  ///
+  /// A welded contact reads as a normal run: the load is still drawing, so nothing looks
+  /// wrong except that the one thing meant to stop it did not.
+  static constexpr float STUCK_CONTACT_AMPS = 0.15f;
+
+  /// How long a reclose must survive before the run counts as recovered.
+  ///
+  /// Without it, unrelated trips hours apart would accumulate toward a lockout.
+  static constexpr unsigned long RECLOSE_SURVIVED_MS = 60000;
 
   bool sampleDue(unsigned long now) {
     if (now - lastSample < SAMPLE_INTERVAL_MS) return false;
@@ -162,6 +245,14 @@ class Monitor {
   bool belowClear() { return !isnan(apparentPower) && apparentPower <= tripClear; }
 
   void updateStatus(unsigned long now) {
+    // A reclose that has held for long enough is a recovery, not an attempt that has
+    // yet to fail, so the count starts again from there.
+    if (attempts > 0 && status != STATUS_OVERLOAD && closedAt != 0 &&
+        now - closedAt >= RECLOSE_SURVIVED_MS) {
+      attempts = 0;
+      closedAt = 0;
+    }
+
     switch (status) {
       case STATUS_NORMAL:
         if (overAlarm()) {
@@ -192,11 +283,30 @@ class Monitor {
         if (now - overTripSince >= TRIP_CONFIRM_MS) {
           status = STATUS_OVERLOAD;
           trippedAt = now;
+
+          // Overriding an operator who closed it moments ago, so make them wait before
+          // asking again. Protection outranks the request every time; the wait only
+          // stops the two fighting several times a second.
+          if (manualClosedAt != 0 && now - manualClosedAt <= RECLOSE_DELAY_MS) {
+            Serial.println("overload after a manual close, opening again");
+            manualBlockedUntil = now + MANUAL_RETRY_MS;
+            manualClosedAt = 0;
+          }
         }
         break;
 
       case STATUS_OVERLOAD:
-        if (belowClear() && now - trippedAt >= RECLOSE_LOCKOUT_MS) {
+        // Locked out is a decision, not a timer. Only a person clears it.
+        if (lockedOut) break;
+
+        if (belowClear() && now - trippedAt >= RECLOSE_DELAY_MS) {
+          if (attempts >= MAX_RECLOSE_ATTEMPTS) {
+            lockedOut = true;
+            break;
+          }
+
+          attempts += 1;
+          closedAt = now;
           status = STATUS_NORMAL;
           abnormalSince = 0;
           overTripSince = 0;
@@ -213,7 +323,25 @@ class Monitor {
   /// calls are how a protection relay ends up closed while the display says OVERLOAD.
   void applyRelay() {
     bool shouldClose = status != STATUS_OVERLOAD;
-    if (relay.isClosed() != shouldClose) relay.set(shouldClose);
+
+    // Normally written only on a change, so the pin is not hammered every cycle.
+    if (relay.isClosed() != shouldClose) {
+      relay.set(shouldClose);
+      return;
+    }
+
+    // Except when the meter disagrees with us. We believe the contacts are open and
+    // current is still flowing, so one of those is wrong, and the measurement is the
+    // one with evidence behind it. Driving the pin again costs nothing and recovers
+    // the case the cached state cannot see: a write that never landed, a module that
+    // did not latch, a line that glitched.
+    //
+    // The board is active low, so this is a HIGH. Re-asserting through Relay rather
+    // than writing the pin here is what keeps that detail in one place.
+    if (!shouldClose && contactsStuck()) {
+      Serial.println("current flowing with the relay open, re-asserting the trip");
+      relay.set(false);
+    }
   }
 
   const char *statusName() {
@@ -313,6 +441,16 @@ class Monitor {
 
   Status status = STATUS_NORMAL;
   bool alarmEdge = false;
+  /// Attempts spent on the current run of trips, reset by a reclose that holds.
+  uint8_t attempts = 0;
+  /// When the contacts last closed after a trip, for judging whether it held.
+  unsigned long closedAt = 0;
+  /// Open and staying open. Survives a reboot, because a fault does.
+  bool lockedOut = false;
+  /// When an operator last closed it, for spotting a close the protection undid.
+  unsigned long manualClosedAt = 0;
+  /// Until when another close request is refused.
+  unsigned long manualBlockedUntil = 0;
   unsigned long lastSample = 0;
   unsigned long abnormalSince = 0;
   unsigned long overTripSince = 0;
