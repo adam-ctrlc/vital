@@ -2,7 +2,6 @@
   "expo": {
     "name": "Vital",
     "slug": "dynavolt",
-    "owner": "peregrine.adrift",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/favicon.png",
@@ -19,7 +18,11 @@
         "backgroundColor": "#0B2545",
         "foregroundImage": "./assets/images/favicon.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "output": "static",
@@ -86,8 +89,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "2ea9033b-4165-466b-9b1e-8d01c60af1aa"
+        "projectId": "58fda3d2-8599-4f6d-bbe2-9fac031791df"
       }
-    }
+    },
+    "owner": "kaizen252526"
   }
 }
