@@ -1,29 +1,59 @@
+use libsql::{Connection, params};
 use serde_json::json;
 
 use crate::alerts::model::Alert;
 use crate::error::AppResult;
 use crate::notifications::model::{ExpoMessage, RegisterToken};
-use crate::sheets::store;
-use crate::sheets::Sheets;
 
 const EXPO_PUSH_URL: &str = "https://exp.host/--/api/v2/push/send";
 /// Expo accepts up to 100 messages per request.
 const BATCH_SIZE: usize = 100;
 
-pub async fn register(sheets: &Sheets, user_id: uuid::Uuid, body: &RegisterToken) -> AppResult<()> {
-    store::push::register(sheets, user_id, body).await
+pub async fn register(
+    conn: &Connection,
+    user_id: uuid::Uuid,
+    body: &RegisterToken,
+) -> AppResult<()> {
+    conn.execute(
+        "insert into push_tokens (token, user_id, platform, channel_id)
+         values (?, ?, ?, ?)
+         on conflict (token) do update
+         set user_id = excluded.user_id,
+             platform = excluded.platform,
+             channel_id = excluded.channel_id",
+        params![
+            body.token.trim(),
+            // Uuids are text here, and the hyphenated form is what every other table
+            // stores, so a join keeps working.
+            user_id.to_string(),
+            body.platform.as_deref().unwrap_or("unknown"),
+            body.channel_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty()),
+        ],
+    )
+    .await?;
+
+    Ok(())
 }
 
-pub async fn unregister(sheets: &Sheets, token: &str, user_id: uuid::Uuid) -> AppResult<()> {
-    store::push::unregister(sheets, token, user_id).await
+pub async fn unregister(conn: &Connection, token: &str, user_id: uuid::Uuid) -> AppResult<()> {
+    conn.execute(
+        "delete from push_tokens where token = ? and user_id = ?",
+        params![token.trim(), user_id.to_string()],
+    )
+    .await?;
+
+    Ok(())
 }
 
 /// Notifies every registered device about an alert.
 ///
 /// Failures are logged, never returned: a push that does not send must not fail the
 /// request that raised the alert. Recording the alert matters more than announcing it.
-pub async fn notify_alert(sheets: &Sheets, alert: &Alert) {
-    let tokens = match store::push::all(sheets).await {
+pub async fn notify_alert(conn: &Connection, alert: &Alert) {
+    let tokens = match load_tokens(conn).await {
         Ok(tokens) => tokens,
         Err(error) => {
             tracing::error!(?error, "could not load push tokens");
@@ -40,19 +70,16 @@ pub async fn notify_alert(sheets: &Sheets, alert: &Alert) {
         _ => "Transformer overloaded",
     };
 
-    // One message per stored row rather than per device. The unique index on the token is
-    // gone with Postgres, so a token that raced two registrations sits on two rows and
-    // that phone is told twice about the same alert.
     let messages: Vec<ExpoMessage> = tokens
         .into_iter()
-        .map(|entry| ExpoMessage {
-            to: entry.token,
+        .map(|(to, channel_id)| ExpoMessage {
+            to,
             title: title.to_owned(),
             body: alert.message.clone(),
             priority: "high",
             sound: "default",
             // Per device, because the tone is a per device choice.
-            channel_id: entry.channel_id,
+            channel_id,
             data: json!({ "alertId": alert.id, "kind": alert.kind }),
         })
         .collect();
@@ -72,4 +99,23 @@ pub async fn notify_alert(sheets: &Sheets, alert: &Alert) {
             }
         }
     }
+}
+
+/// Every registered device, with the channel it asked for.
+///
+/// Split out so the caller can keep failing quietly: rows arrive one await at a time
+/// here, and threading that through `notify_alert` would bury the push logic in match
+/// arms that all do the same thing.
+async fn load_tokens(conn: &Connection) -> AppResult<Vec<(String, Option<String>)>> {
+    let mut rows = conn
+        .query("select token, channel_id from push_tokens", ())
+        .await?;
+
+    let mut tokens = Vec::new();
+
+    while let Some(row) = rows.next().await? {
+        tokens.push((row.get(0)?, row.get(1)?));
+    }
+
+    Ok(tokens)
 }

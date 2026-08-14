@@ -6,119 +6,36 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 
-#include "../../secrets.h"
-#include "../config/Device.h"
-
 class BackendClient {
  public:
   BackendClient() = default;
 
-  // The heartbeat response carries the operator's alarm thresholds. NAN on either
-  // field (or a failed call) means "no update", so the board keeps what it had.
+  /// What an operator asked the relay to do, or nothing.
+  ///
+  /// The backend hands a command over exactly once and clears it in the same statement,
+  /// so a command missed here is not repeated. That is deliberate: a queued command
+  /// replayed after a reboot would act on an intent minutes stale.
+  enum RelayCommand { RELAY_NONE, RELAY_OPEN, RELAY_CLOSE };
+
+  /// What the heartbeat response carried back.
+  ///
+  /// NAN on a threshold (or a failed call) means "no update", so the board keeps what
+  /// it had rather than falling back to a default.
   struct HeartbeatResult {
     bool ok = false;
     float loadThresholdVa = NAN;
     float tripThresholdVa = NAN;
     float tempThresholdC = NAN;
-    /// An operator has asked for a locked out relay to be closed again.
-    bool resetRelay = false;
+    /// What an operator asked for, if anything, since the last heartbeat.
+    RelayCommand relayCommand = RELAY_NONE;
+    /// The operator's reclose wait. Zero means the response did not carry one.
+    unsigned long recloseDelaySeconds = 0;
   };
 
-  HeartbeatResult postHeartbeat(bool lockedOut) {
-    HeartbeatResult result;
-    if (WiFi.status() != WL_CONNECTED) return result;
-
-    JsonDocument doc;
-    doc["deviceId"] = DEVICE_ID;
-    doc["firmware"] = FIRMWARE_VERSION;
-    // The serializer escapes these. Concatenated by hand they were a latent break:
-    // an SSID holding a quote or a backslash produced malformed JSON and a 400 that
-    // would have read as the board being broken.
-    doc["ssid"] = WiFi.SSID();
-    doc["ipAddress"] = WiFi.localIP().toString();
-    doc["signalDbm"] = (int)WiFi.RSSI();
-    doc["uptimeSeconds"] = (unsigned long)(millis() / 1000);
-    // Reported so an operator can see the load is off on purpose rather than the board
-    // having died, which look identical from the outside.
-    doc["relayLockedOut"] = lockedOut;
-
-    String body;
-    serializeJson(doc, body);
-
-    HTTPClient http;
-    http.begin(shared(), String(BACKEND_URL) + "/api/v1/device/heartbeat");
-    http.setReuse(true);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("x-device-key", DEVICE_KEY);
-
-    int code = http.POST(body);
-    Serial.print("POST /heartbeat -> ");
-    Serial.println(code);
-    if (code >= 200 && code < 300) {
-      result.ok = true;
-
-      // A body that will not parse leaves both thresholds NAN, which applyThresholds
-      // already reads as "no update".
-      JsonDocument ack;
-      if (!deserializeJson(ack, http.getString())) {
-        result.loadThresholdVa = ack["loadThresholdVa"] | NAN;
-        result.tripThresholdVa = ack["tripThresholdVa"] | NAN;
-        result.tempThresholdC = ack["tempThresholdC"] | NAN;
-        result.resetRelay = ack["resetRelay"] | false;
-      }
-    }
-    http.end();
-
-    return result;
-  }
+  HeartbeatResult postHeartbeat(bool lockedOut);
 
   bool postReading(float voltage, float current, float temperature,
-                   float power, float pf, float frequency, float energy, bool relayClosed) {
-    if (WiFi.status() != WL_CONNECTED) return false;
-
-    JsonDocument doc;
-    bool any = false;
-    any |= addMeasurement(doc, "voltageV", voltage, 1);
-    any |= addMeasurement(doc, "currentA", current, 3);
-    any |= addMeasurement(doc, "temperatureC", temperature, 2);
-    any |= addMeasurement(doc, "powerW", power, 1);
-    any |= addMeasurement(doc, "powerFactor", pf, 2);
-    any |= addMeasurement(doc, "frequencyHz", frequency, 1);
-    any |= addMeasurement(doc, "energyKwh", energy, 3);
-
-    if (!any) {
-      Serial.println("no readings to send, skipping post.");
-      return false;
-    }
-
-    // Added after the emptiness check on purpose. A contact position is not a
-    // measurement, so a payload carrying only this is still nothing to record and the
-    // backend would rightly refuse it.
-    doc["relayClosed"] = relayClosed;
-
-    String body;
-    serializeJson(doc, body);
-
-    HTTPClient http;
-    http.begin(shared(), String(BACKEND_URL) + "/api/v1/readings");
-    // Asks the server to hold the socket open, which is what lets the next post skip
-    // the handshake. Without it the connection is closed under us and reuse is moot.
-    http.setReuse(true);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("x-device-key", DEVICE_KEY);
-
-    int code = http.POST(body);
-    Serial.print("POST /readings -> ");
-    Serial.println(code);
-    if (code > 0) {
-      Serial.println(http.getString());
-    } else {
-      Serial.println(http.errorToString(code));
-    }
-    http.end();
-
-    return code >= 200 && code < 300;
-  }
+                   float power, float pf, float frequency, float energy, bool relayClosed);
 
  private:
   /// The one TLS client, kept alive between posts.
@@ -130,14 +47,7 @@ class BackendClient {
   ///
   /// Still `setInsecure`, and still deliberately: pinning a root CA is the fix for that,
   /// and the board bound-checks anything a response tells it in the meantime.
-  WiFiClientSecure &shared() {
-    if (!secureReady) {
-      secure.setInsecure();
-      secureReady = true;
-    }
-
-    return secure;
-  }
+  WiFiClientSecure &shared();
 
   WiFiClientSecure secure;
   bool secureReady = false;
@@ -148,10 +58,5 @@ class BackendClient {
   /// the payload to the subset the API documents. `serialized` preserves the per
   /// field precision the meter actually resolves, so energy still reads 12.500 rather
   /// than a float's full expansion.
-  static bool addMeasurement(JsonDocument &doc, const char *key, float value, int digits) {
-    if (isnan(value)) return false;
-
-    doc[key] = serialized(String(value, digits));
-    return true;
-  }
+  static bool addMeasurement(JsonDocument &doc, const char *key, float value, int digits);
 };

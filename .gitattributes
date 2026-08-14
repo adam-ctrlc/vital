@@ -1,0 +1,12 @@
+# sqlx checksums migration files byte for byte, so a CRLF conversion on checkout makes
+# every already-applied migration read as tampered with and the server refuses to start
+# with VersionMismatch. Checking them out as LF on every platform is what stops that.
+*.sql text eol=lf
+
+# Same reasoning, lighter consequence: these are compared and hashed by other tools.
+*.rs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+
+# Audio is not text and must never be line ending converted.
+*.wav binary

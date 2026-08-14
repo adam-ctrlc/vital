@@ -2,16 +2,18 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use libsql::params;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::auth::Role;
 use crate::auth::extract::AdminUser;
 use crate::error::{AppError, AppResult};
-use crate::sheets::store;
+use crate::search;
 use crate::state::AppState;
 use crate::users::model::{
     CreateUser, SuggestUsername, UpdateUser, User, UsernameSuggestion, clean_optional,
+    clean_username, user_columns,
 };
 use crate::users::service;
 
@@ -52,13 +54,43 @@ async fn list(
         return Err(AppError::BadRequest(format!("invalid role: {role}")));
     }
 
-    // The needle goes to the store exactly as it was typed. `search::escape_like` was
-    // there because ILIKE read `%` and `_` as wildcards; the store matches with
-    // `contains`, so escaping first would make a search for a literal percent sign look
-    // for a backslash that nobody's name contains.
-    let needle = filter(query.q);
+    let conn = state.db.conn()?;
 
-    let users = store::users::list(&state.sheets, role.as_deref(), needle.as_deref()).await?;
+    // `like` rather than `ilike`, which SQLite does not have and does not need: its
+    // `like` is already case insensitive for ASCII, so the behavior is unchanged.
+    //
+    // The `escape` clause is not optional here. Postgres treats a backslash as the
+    // escape character by default, SQLite has none until one is named, so without it
+    // the wildcards `search::escape_like` neutralized would be matched literally and a
+    // needle containing `%` would find nothing at all.
+    let mut rows = conn
+        .query(
+            concat!(
+                "select ",
+                user_columns!(),
+                " from users
+                 where (?1 is null or role = ?1)
+                   and (?2 is null
+                        or email like '%' || ?2 || '%' escape '\\'
+                        or username like '%' || ?2 || '%' escape '\\'
+                        or first_name like '%' || ?2 || '%' escape '\\'
+                        or middle_name like '%' || ?2 || '%' escape '\\'
+                        or last_name like '%' || ?2 || '%' escape '\\'
+                        or trim(first_name || ' ' || coalesce(middle_name || ' ', '') || last_name)
+                           like '%' || ?2 || '%' escape '\\')
+                 order by created_at"
+            ),
+            params![
+                role,
+                filter(query.q).map(|needle| search::escape_like(&needle))
+            ],
+        )
+        .await?;
+
+    let mut users = Vec::new();
+    while let Some(row) = rows.next().await? {
+        users.push(User::from_row(&row)?);
+    }
 
     Ok(Json(users))
 }
@@ -69,8 +101,8 @@ async fn username_suggestion(
     _admin: AdminUser,
     Query(query): Query<SuggestUsername>,
 ) -> AppResult<Json<UsernameSuggestion>> {
-    let username =
-        service::suggest_username(&state.sheets, &query.first_name, &query.last_name).await?;
+    let conn = state.db.conn()?;
+    let username = service::suggest_username(&conn, &query.first_name, &query.last_name).await?;
 
     Ok(Json(UsernameSuggestion { username }))
 }
@@ -98,16 +130,31 @@ async fn create(
         return Err(AppError::BadRequest("last name is required".to_owned()));
     }
 
-    // The email and username collision checks used to be two queries here, ahead of the
-    // insert, with a unique index behind them to catch anything that slipped through in
-    // between. The store now runs both against the rows it is about to append to, which
-    // is one read instead of two and keeps the same messages. What is gone is the index:
-    // two admins adding an account in the same second can both pass the check and both
-    // be appended, so this is a check followed by a write rather than one atomic act.
-    //
-    // That also means a duplicate is now always a 400 from the check. It used to be able
-    // to come back as a 409 when the index caught the race instead.
-    service::create(&state.sheets, &body).await?;
+    let conn = state.db.conn()?;
+
+    let mut taken = conn
+        .query("select id from users where email = ?1", params![email])
+        .await?;
+
+    if taken.next().await?.is_some() {
+        return Err(AppError::BadRequest("email already registered".to_owned()));
+    }
+
+    // Only a username the admin typed is checked here; a blank one is generated in
+    // the service, and the formula only ever returns a free name.
+    if let Some(username) = body.username.as_deref().map(clean_username)
+        && !username.is_empty()
+    {
+        let mut clash = conn
+            .query("select id from users where username = ?1", [username])
+            .await?;
+
+        if clash.next().await?.is_some() {
+            return Err(AppError::BadRequest("username already taken".to_owned()));
+        }
+    }
+
+    service::create(&conn, &body).await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -138,18 +185,18 @@ async fn update(
         ));
     }
 
-    // NotFound before the role guard, so a missing id never reads as a role error.
-    let current = store::users::find_by_id(&state.sheets, id)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let conn = state.db.conn()?;
 
-    if admin.0.id == id && body.role.as_str() != current.user.role {
+    // NotFound before the role guard, so a missing id never reads as a role error.
+    let current_role = role_of(&conn, id).await?;
+
+    if admin.0.id == id && body.role.as_str() != current_role {
         return Err(AppError::BadRequest(
             "you cannot change your own role".to_owned(),
         ));
     }
 
-    let user = service::update(&state.sheets, id, &body).await?;
+    let user = service::update(&conn, id, &body).await?;
 
     Ok(Json(user))
 }
@@ -165,25 +212,40 @@ async fn remove(
         ));
     }
 
+    let conn = state.db.conn()?;
+
     // NotFound before the role guard, so a missing id never reads as a role error.
-    let target = store::users::find_by_id(&state.sheets, id)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let target_role = role_of(&conn, id).await?;
 
     // Admins cannot remove each other. Self-deletion was already blocked, which left
     // the one case it was meant to prevent still open: two admins can delete each
     // other, and the last one standing can be deleted by nobody but themselves, which
     // they cannot do either. Requiring an admin account to be demoted before it can be
     // removed makes losing admin access a deliberate two-step act rather than one tap.
-    if target.user.role == Role::Admin.as_str() {
+    if target_role == Role::Admin.as_str() {
         return Err(AppError::BadRequest(
             "an admin cannot be deleted. Change the role to user first".to_owned(),
         ));
     }
 
-    // The store raises NotFound when the row is already gone, which is what the zero
-    // rows-affected check did.
-    store::users::delete(&state.sheets, id).await?;
+    let affected = conn
+        .execute("delete from users where id = ?1", [id.to_string()])
+        .await?;
+
+    if affected == 0 {
+        return Err(AppError::NotFound);
+    }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Reads an account's role, or `NotFound` when there is no such account.
+async fn role_of(conn: &libsql::Connection, id: Uuid) -> AppResult<String> {
+    let mut rows = conn
+        .query("select role from users where id = ?1", [id.to_string()])
+        .await?;
+
+    let row = rows.next().await?.ok_or(AppError::NotFound)?;
+
+    Ok(row.get(0)?)
 }

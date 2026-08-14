@@ -1,8 +1,10 @@
 use chrono::{DateTime, Utc};
+use libsql::Row;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::Role;
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +20,62 @@ pub struct User {
     pub last_name: String,
     pub full_name: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// The columns every user query selects, in the order `User::from_row` reads them.
+///
+/// A macro rather than a constant so `concat!` can splice it: the SQL stays a
+/// compile-time literal, and no query is ever assembled from runtime strings.
+///
+/// `full_name` is not among them. Postgres composed it with `concat_ws` in each
+/// query; here it is composed by `full_name` below, so the display name has one
+/// definition instead of one in Rust and one repeated in every statement.
+macro_rules! user_columns {
+    () => {
+        "id, email, username, role, first_name, middle_name, last_name, created_at"
+    };
+}
+
+pub(crate) use user_columns;
+
+impl User {
+    /// Reads a row selected as `user_columns!()`.
+    ///
+    /// By index rather than by name: the column list is one macro shared by every
+    /// query that builds a `User`, so the order is fixed in one place.
+    pub(crate) fn from_row(row: &Row) -> AppResult<Self> {
+        let first_name: String = row.get(4)?;
+        let middle_name: Option<String> = row.get(5)?;
+        let last_name: String = row.get(6)?;
+
+        Ok(Self {
+            id: parse_uuid(&row.get::<String>(0)?)?,
+            email: row.get(1)?,
+            username: row.get(2)?,
+            role: row.get(3)?,
+            full_name: full_name(&first_name, middle_name.as_deref(), &last_name),
+            first_name,
+            middle_name,
+            last_name,
+            created_at: parse_timestamp(&row.get::<String>(7)?)?,
+        })
+    }
+}
+
+/// SQLite has no uuid type, so ids are text and are parsed on the way out.
+///
+/// A failure here means the stored value is not a uuid at all, which is the database
+/// disagreeing with itself rather than anything the caller did.
+pub(crate) fn parse_uuid(value: &str) -> AppResult<Uuid> {
+    Uuid::parse_str(value).map_err(|error| AppError::Upstream(format!("stored id: {error}")))
+}
+
+/// SQLite has no date type either. Timestamps are written as RFC 3339 text so they
+/// sort chronologically and round trip through chrono unchanged.
+pub(crate) fn parse_timestamp(value: &str) -> AppResult<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|at| at.with_timezone(&Utc))
+        .map_err(|error| AppError::Upstream(format!("stored timestamp: {error}")))
 }
 
 #[derive(Debug, Deserialize)]

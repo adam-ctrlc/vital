@@ -10,11 +10,9 @@ pub struct Settings {
     /// before the board acts for them.
     pub trip_threshold_va: f64,
     pub temp_threshold_c: f64,
-    /// How long the board waits before each reclose attempt, in seconds.
-    ///
-    /// Here rather than in the firmware because how long a transformer should sit
-    /// disconnected before trying again is a property of the transformer, not of the
-    /// code, and changing it should not need a reflash.
+    /// How long the board waits before each reclose attempt, in seconds. Operator owned
+    /// rather than fixed in the firmware, because how long a transformer should sit
+    /// disconnected depends on the transformer, and changing it should not need a reflash.
     pub reclose_delay_seconds: i32,
     pub source_mode: String,
     pub updated_at: DateTime<Utc>,

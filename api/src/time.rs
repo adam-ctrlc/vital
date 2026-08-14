@@ -9,6 +9,10 @@ const LOCAL_LABEL_FORMAT: &str = "%B %-d, %Y %-I:%M %p";
 pub fn local_label(at: DateTime<Utc>) -> String {
     FixedOffset::east_opt(LOCAL_OFFSET_SECONDS).map_or_else(
         || at.format(LOCAL_LABEL_FORMAT).to_string(),
-        |offset| at.with_timezone(&offset).format(LOCAL_LABEL_FORMAT).to_string(),
+        |offset| {
+            at.with_timezone(&offset)
+                .format(LOCAL_LABEL_FORMAT)
+                .to_string()
+        },
     )
 }

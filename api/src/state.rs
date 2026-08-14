@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
-use crate::sheets::Sheets;
+use crate::db::Db;
 
 #[derive(Clone)]
 pub struct AppState {
-    /// The spreadsheet standing in for the database.
-    ///
-    /// Cheap to clone: it holds credentials and a cached token rather than a connection
-    /// pool, because there is no connection to hold.
-    pub sheets: Sheets,
+    /// Shared rather than cloned: `Db` holds the remote handle, and every request takes
+    /// its own connection from it, which over HTTP is a handle rather than a socket.
+    pub db: Arc<Db>,
     pub jwt_secret: Arc<str>,
     pub simulator_enabled: bool,
     pub sample_interval_ms: i64,

@@ -15,7 +15,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn read(State(state): State<AppState>, _auth: AuthUser) -> AppResult<Json<Settings>> {
-    Ok(Json(service::load(&state.sheets).await?))
+    Ok(Json(service::load(&state.db.conn()?).await?))
 }
 
 async fn update(
@@ -43,27 +43,16 @@ async fn update(
         ));
     }
 
-    // Bounded here as well as by the constraint, for the same reason as the thresholds:
-    // an explanation beats a conflict. Below five seconds is not a wait, and above ten
-    // minutes the load is off long enough that nobody would wait for it.
+    // Bounded here as well as by the constraint, for the same reason: a zero would let the
+    // board slam a faulted transformer back on with no pause at all, and an hour would park
+    // the load off long past the point anyone would wait for it.
     if !(5..=600).contains(&body.reclose_delay_seconds) {
         return Err(AppError::BadRequest(
             "reclose delay must be between 5 and 600 seconds".to_owned(),
         ));
     }
 
-    // Read then written, because a spreadsheet has no partial update worth having.
-    // The source mode is carried through untouched: it belongs to a different control
-    // and writing the whole row would otherwise clear it.
-    let mut settings = service::load(&state.sheets).await?;
-    settings.load_threshold_va = body.load_threshold_va;
-    settings.trip_threshold_va = body.trip_threshold_va;
-    settings.temp_threshold_c = body.temp_threshold_c;
-    settings.reclose_delay_seconds = body.reclose_delay_seconds;
-
-    let settings = service::save(&state.sheets, &settings).await?;
-
-    Ok(Json(settings))
+    Ok(Json(service::update(&state.db.conn()?, &body).await?))
 }
 
 async fn set_source(
@@ -80,5 +69,7 @@ async fn set_source(
         }
     }
 
-    Ok(Json(service::set_source(&state.sheets, &body.source_mode).await?))
+    Ok(Json(
+        service::set_source(&state.db.conn()?, &body.source_mode).await?,
+    ))
 }

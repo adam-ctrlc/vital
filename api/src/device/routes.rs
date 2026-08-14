@@ -20,7 +20,7 @@ pub fn router() -> Router<AppState> {
 /// screen renders it, and that screen is already admin-gated. The dashboard learns
 /// whether the board is live from `/readings/latest` instead.
 async fn status(State(state): State<AppState>, _admin: AdminUser) -> AppResult<Json<DeviceStatus>> {
-    Ok(Json(service::status(&state.sheets).await?))
+    Ok(Json(service::status(&state.db.conn()?).await?))
 }
 
 /// Device only: the firmware self-reports its identity and link telemetry here, and
@@ -30,7 +30,9 @@ async fn heartbeat(
     _device: DeviceAuth,
     Json(body): Json<Heartbeat>,
 ) -> AppResult<Json<HeartbeatAck>> {
-    Ok(Json(service::record_heartbeat(&state.sheets, &body).await?))
+    Ok(Json(
+        service::record_heartbeat(&state.db.conn()?, &body).await?,
+    ))
 }
 
 /// Admin only: asks the board to open or close the relay.
@@ -39,7 +41,7 @@ async fn heartbeat(
 /// on someone's Wi-Fi behind whatever NAT and only ever speaks outward. The command
 /// waits for its next heartbeat, which is every few seconds while the relay is open.
 ///
-/// Restricted to admins deliberately. Closing means energising a transformer that may
+/// Restricted to admins deliberately. Closing means energizing a transformer that may
 /// still be faulted, and opening means cutting the load; both belong to whoever is
 /// responsible for the transformer rather than to anyone holding the app.
 ///
@@ -56,7 +58,7 @@ async fn relay_command(
         ));
     }
 
-    service::request_relay_command(&state.sheets, &body.command).await?;
+    service::request_relay_command(&state.db.conn()?, &body.command).await?;
 
     tracing::warn!(user_id = %admin.0.id, command = %body.command, "relay command queued");
 

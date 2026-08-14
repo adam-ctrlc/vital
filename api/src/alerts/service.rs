@@ -1,17 +1,17 @@
-use crate::alerts::model::{KIND_OVERLOAD, KIND_TEMPERATURE};
+use libsql::{Connection, params};
+
+use crate::alerts::model::{Alert, KIND_OVERLOAD, KIND_TEMPERATURE, alert_columns};
 use crate::error::AppResult;
 use crate::notifications;
 use crate::readings::model::Reading;
 use crate::settings::model::Settings;
-use crate::sheets::Sheets;
-use crate::sheets::store;
 
 /// Opens alerts for any threshold the reading crosses.
-pub async fn evaluate(sheets: &Sheets, reading: &Reading, settings: &Settings) -> AppResult<()> {
+pub async fn evaluate(conn: &Connection, reading: &Reading, settings: &Settings) -> AppResult<()> {
     if let Some(apparent) = reading.apparent_power_va {
         if apparent >= settings.load_threshold_va {
             raise(
-                sheets,
+                conn,
                 reading.id,
                 KIND_OVERLOAD,
                 &format!("Load reached {apparent:.0} VA"),
@@ -25,7 +25,7 @@ pub async fn evaluate(sheets: &Sheets, reading: &Reading, settings: &Settings) -
     if let Some(temperature) = reading.temperature_c {
         if temperature >= settings.temp_threshold_c {
             raise(
-                sheets,
+                conn,
                 reading.id,
                 KIND_TEMPERATURE,
                 &format!("Temperature reached {temperature:.1} °C"),
@@ -39,58 +39,131 @@ pub async fn evaluate(sheets: &Sheets, reading: &Reading, settings: &Settings) -
     Ok(())
 }
 
+/// How long an ongoing condition waits before announcing itself again.
+///
+/// An alarm that speaks once and then goes quiet while the fault continues is not an
+/// alarm. This is deliberately far longer than the reading interval: the point is to
+/// keep saying it, not to say it every few seconds until the phone is thrown across
+/// the room.
+const RENOTIFY_AFTER_SECONDS: i64 = 60;
+
 /// Opens an alert only when nothing of the same kind is still unacknowledged, so a fast
 /// heartbeat cannot flood the alert list with duplicates of one ongoing condition.
 ///
 /// The list is de-duplicated; the notification is not. An unacknowledged condition is
-/// announced again on the store's renotify interval, against the same alert rather than a
-/// new one, so the history stays one row per condition while the phone keeps being told
-/// the transformer is still over its limit.
-///
-/// The three store calls below are the three steps this used to run as SQL, in the same
-/// order, because the order is the policy: claim a re-announcement first, then treat an
-/// open alert as reason to stay quiet, and only then open a new one.
+/// announced again every RENOTIFY_AFTER_SECONDS, against the same alert rather than a
+/// new one, so the history stays one row per condition while the phone keeps being
+/// told the transformer is still over its limit.
 async fn raise(
-    sheets: &Sheets,
+    conn: &Connection,
     reading_id: i64,
     kind: &str,
     message: &str,
     value: f64,
     threshold: f64,
 ) -> AppResult<()> {
-    // Postgres found the due alert and stamped it in one statement under `for update
-    // skip locked`, so of two readings arriving together exactly one came away holding
-    // it. The store now reads and writes in separate calls with a round trip between,
-    // so both can see the same alert as due and both announce it. The interval is a
-    // floor on how often a phone is told, no longer a promise that it is told once.
-    if let Some(alert) = store::alerts::claim_renotify(sheets, kind).await? {
-        tracing::info!(kind, value, alert_id = alert.id, "condition ongoing, announcing again");
-        notifications::service::notify_alert(sheets, &alert).await;
+    // Claims the right to re-announce and reads the alert in one statement, so two
+    // concurrent readings cannot both decide they are the one that is due. The row is
+    // only returned when it was actually claimed.
+    //
+    // Postgres held the candidate with `for update skip locked` while it decided. There
+    // is no equivalent here and none is needed: SQLite admits one writer at a time, so
+    // this UPDATE is applied whole against a row nobody else is touching. What replaces
+    // the lock is the due condition living in the WHERE clause rather than in a
+    // preceding read. Whoever runs second matches against the `last_notified_at` the
+    // first one just wrote, no longer satisfies the predicate, and is handed no row.
+    //
+    // The `order by ... limit 1` is gone too: `alerts_one_active_per_kind` permits only
+    // one unacknowledged alert per kind, so the predicate already names a single row.
+    //
+    // `strftime('%s', ...)` is whole seconds since the epoch on both sides, which is
+    // what turns "at least sixty seconds have passed" into arithmetic.
+    let mut claimed = conn
+        .query(
+            concat!(
+                "update alerts
+                 set last_notified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 where kind = ?1
+                   and acknowledged_at is null
+                   and (last_notified_at is null
+                        or strftime('%s', 'now') - strftime('%s', last_notified_at) >= ?2)
+                 returning ",
+                alert_columns!("")
+            ),
+            params![kind, RENOTIFY_AFTER_SECONDS],
+        )
+        .await?;
+
+    if let Some(row) = claimed.next().await? {
+        let alert = Alert::from_row(&row)?;
+
+        tracing::info!(
+            kind,
+            value,
+            alert_id = alert.id,
+            "condition ongoing, announcing again"
+        );
+        notifications::service::notify_alert(conn, &alert).await;
 
         return Ok(());
     }
 
     // Nothing was claimed, which means either no open alert of this kind, or one that
     // has been announced too recently to say again.
-    if let Some(open) = store::alerts::open_of_kind(sheets, kind).await? {
-        tracing::debug!(kind, value, open = open.id, "condition ongoing, announced too recently");
+    let mut active = conn
+        .query(
+            "select id from alerts where kind = ?1 and acknowledged_at is null limit 1",
+            [kind],
+        )
+        .await?;
+
+    if let Some(row) = active.next().await? {
+        let open: i64 = row.get(0)?;
+
+        tracing::debug!(
+            kind,
+            value,
+            open,
+            "condition ongoing, announced too recently"
+        );
 
         return Ok(());
     }
 
-    // This check and the insert below are no longer one atomic step. The partial unique
-    // index that used to turn a lost race into a conflict has no equivalent in a
-    // spreadsheet, so two ingests that both find nothing open here will both append: one
-    // ongoing overload can become two alerts and two pushes to every device. There is
-    // nothing to catch here any more, which is why the insert result is taken straight.
-    let alert = store::alerts::insert(sheets, reading_id, kind, message, value, threshold).await?;
+    let inserted = conn
+        .query(
+            concat!(
+                "insert into alerts (reading_id, kind, message, value, threshold, last_notified_at)
+                 values (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                 returning ",
+                alert_columns!("")
+            ),
+            params![reading_id, kind, message, value, threshold],
+        )
+        .await;
+
+    let alert = match inserted {
+        Ok(mut rows) => match rows.next().await? {
+            Some(row) => Alert::from_row(&row)?,
+            // An insert that succeeded always returns the row it wrote, so there is
+            // nothing here to announce and nothing to report.
+            None => return Ok(()),
+        },
+        // Lost the race: another request opened the same condition between the check
+        // above and this insert. The partial unique index `alerts_one_active_per_kind`
+        // is what turns that into a conflict rather than a second alert and a second
+        // push to every device. Nothing to report, the condition is already raised.
+        Err(error) if crate::error::is_unique_violation(&error) => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
 
     tracing::info!(kind, value, threshold, "alert raised");
 
     // Awaited rather than spawned: a serverless function may be frozen the moment it
     // responds, which would cut a detached task off mid-flight. This only runs when a
     // new alert is opened, so it is not on the common path.
-    notifications::service::notify_alert(sheets, &alert).await;
+    notifications::service::notify_alert(conn, &alert).await;
 
     Ok(())
 }

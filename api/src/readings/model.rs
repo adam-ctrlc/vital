@@ -2,9 +2,10 @@ use std::fmt;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
+use libsql::Row;
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppError;
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -108,9 +109,10 @@ impl ReadingInput {
     /// board was talking without saying anything about the transformer. Stored, they
     /// count toward `total`, occupy pages of the log, and drag every average in the
     /// trend toward a value nobody measured.
-    #[must_use]
+    ///
     /// Deliberately ignores the relay position. A contact state is not a measurement of
     /// the transformer, so a payload carrying only that still has nothing to record.
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.voltage_v.is_none()
             && self.current_a.is_none()
@@ -122,11 +124,24 @@ impl ReadingInput {
     }
 }
 
+/// Timestamps are text in this database, so every read parses.
+///
+/// SQLite has no date type, so instants are RFC 3339 written by
+/// `strftime('%Y-%m-%dT%H:%M:%fZ', ...)`. `datetime('now')` would look close enough in
+/// the row and fail here: it has no T and no zone, and chrono will not parse it.
+///
+/// Shared with the service rather than repeated there: within one domain, how a stored
+/// instant is read back should only be possible to get wrong in one place.
+pub(crate) fn parse_timestamp(raw: &str) -> AppResult<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw)
+        .map(|at| at.with_timezone(&Utc))
+        .map_err(|error| AppError::Upstream(format!("unreadable timestamp {raw:?}: {error}")))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reading {
     pub id: i64,
-    pub relay_closed: Option<bool>,
     pub voltage_v: Option<f64>,
     pub current_a: Option<f64>,
     pub temperature_c: Option<f64>,
@@ -137,7 +152,45 @@ pub struct Reading {
     pub power_factor: Option<f64>,
     pub frequency_hz: Option<f64>,
     pub energy_kwh: Option<f64>,
+    /// Whether the relay was passing load when this row was measured.
+    pub relay_closed: Option<bool>,
     pub recorded_at: DateTime<Utc>,
+}
+
+impl Reading {
+    /// The columns `from_row` reads, in the order it reads them.
+    ///
+    /// Shared by every statement that returns a reading, because decoding is positional
+    /// now: a select list and its decoder are one fact rather than two that have to be
+    /// kept in agreement, and a column quietly inserted in the middle of one of four
+    /// copies of this list would misread every field after it rather than fail.
+    pub const COLUMNS: &'static str = "id, voltage_v, current_a, temperature_c, apparent_power_va, \
+         status, source, power_w, power_factor, frequency_hz, energy_kwh, relay_closed, recorded_at";
+
+    /// Reads the row by column index, in the order `COLUMNS` selects.
+    ///
+    /// `serde` cannot be used here: the struct is renamed to camelCase for the app, so a
+    /// field-name lookup would go hunting for a `voltageV` column, and `relayClosed` would
+    /// be refused the integer SQLite actually stores.
+    pub(crate) fn from_row(row: &Row) -> AppResult<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            voltage_v: row.get(1)?,
+            current_a: row.get(2)?,
+            temperature_c: row.get(3)?,
+            apparent_power_va: row.get(4)?,
+            status: row.get(5)?,
+            source: row.get(6)?,
+            power_w: row.get(7)?,
+            power_factor: row.get(8)?,
+            frequency_hz: row.get(9)?,
+            energy_kwh: row.get(10)?,
+            // Stored as the integer 0 or 1, which libsql turns back into a bool. Null
+            // stays null: a simulated reading has no contacts to report.
+            relay_closed: row.get(11)?,
+            recorded_at: parse_timestamp(&row.get::<String>(12)?)?,
+        })
+    }
 }
 
 /// The dashboard heartbeat payload: live values plus the thresholds they are judged against.
@@ -209,6 +262,18 @@ pub struct TrendPoint {
     pub samples: i64,
 }
 
+impl TrendPoint {
+    pub(crate) fn from_row(row: &Row) -> AppResult<Self> {
+        Ok(Self {
+            day: parse_timestamp(&row.get::<String>(0)?)?,
+            avg_power_va: row.get(1)?,
+            max_power_va: row.get(2)?,
+            avg_temperature_c: row.get(3)?,
+            samples: row.get(4)?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod input_tests {
     use super::ReadingInput;
@@ -234,6 +299,26 @@ mod input_tests {
             ..ReadingInput::empty()
         };
         assert!(!energy_only.is_empty());
+    }
+
+    #[test]
+    fn a_relay_position_on_its_own_is_still_empty() {
+        // The contact state describes the protection, not the transformer, so a board
+        // that reports only where its relay sits has measured nothing. Counting it
+        // would let a heartbeat write a row of nulls into the log and the trend.
+        let relay_only = ReadingInput {
+            relay_closed: Some(true),
+            ..ReadingInput::empty()
+        };
+        assert!(relay_only.is_empty());
+
+        // Still stored when it rides along with a real measurement.
+        let tripped_under_load = ReadingInput {
+            current_a: Some(4.2),
+            relay_closed: Some(false),
+            ..ReadingInput::empty()
+        };
+        assert!(!tripped_under_load.is_empty());
     }
 
     #[test]

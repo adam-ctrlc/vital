@@ -15,23 +15,11 @@ class EnergyMeter {
     float powerFactor;
   };
 
-  EnergyMeter(HardwareSerial &serial, uint8_t rx, uint8_t tx)
-      : serial(serial), rxPin(rx), txPin(tx), pzem(serial, rx, tx) {}
+  EnergyMeter(HardwareSerial &serial, uint8_t rx, uint8_t tx);
 
-  void begin() {
-    serial.begin(9600, SERIAL_8N1, rxPin, txPin);
-  }
+  void begin();
 
-  Reading read() {
-    Reading r;
-    r.voltage = pzem.voltage();
-    r.current = pzem.current();
-    r.power = pzem.power();
-    r.energy = pzem.energy();
-    r.frequency = pzem.frequency();
-    r.powerFactor = pzem.pf();
-    return r;
-  }
+  Reading read();
 
  private:
   HardwareSerial &serial;

@@ -9,19 +9,18 @@ const DEFAULT_SAMPLE_INTERVAL_MS: i64 = 15_000;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// The libSQL endpoint, as Turso gives it.
+    ///
+    /// Accepted as either `libsql://` or `https://`: the dashboard shows the first and
+    /// the client wants the second, and making a deployment fail over a scheme nobody
+    /// chose is a poor use of an outage.
+    pub database_url: String,
+    pub database_token: String,
     pub jwt_secret: String,
     pub port: u16,
     pub simulator_enabled: bool,
     pub sample_interval_ms: i64,
     pub device_api_key: Option<String>,
-    /// The service account JSON, verbatim.
-    ///
-    /// An environment variable rather than a file: there is nowhere to put a file on a
-    /// serverless deploy, and a key committed beside the code is how keys reach public
-    /// history.
-    pub google_service_account: String,
-    /// The spreadsheet standing in for the database.
-    pub spreadsheet_id: String,
 }
 
 fn required(key: &str) -> AppResult<String> {
@@ -34,6 +33,14 @@ fn parsed<T: std::str::FromStr>(key: &str, fallback: T) -> AppResult<T> {
         Ok(raw) => raw
             .parse::<T>()
             .map_err(|_| AppError::InvalidEnv(key.to_owned())),
+    }
+}
+
+/// Accepts the scheme Turso displays and hands over the one the client needs.
+fn normalize_libsql(url: &str) -> String {
+    match url.strip_prefix("libsql://") {
+        Some(rest) => format!("https://{rest}"),
+        None => url.to_owned(),
     }
 }
 
@@ -52,20 +59,36 @@ fn optional_secret(raw: Option<String>) -> Option<String> {
 impl Config {
     pub fn from_env() -> AppResult<Self> {
         Ok(Self {
+            database_url: normalize_libsql(&required("DATABASE_URL")?),
+            database_token: required("DATABASE_AUTH_TOKEN")?,
             jwt_secret: required("JWT_SECRET")?,
             port: parsed("PORT", 8080)?,
             simulator_enabled: parsed("SIMULATOR_ENABLED", true)?,
             sample_interval_ms: parsed("SAMPLE_INTERVAL_MS", DEFAULT_SAMPLE_INTERVAL_MS)?,
             device_api_key: optional_secret(std::env::var("DEVICE_API_KEY").ok()),
-            google_service_account: required("GOOGLE_SERVICE_ACCOUNT")?,
-            spreadsheet_id: required("SHEETS_SPREADSHEET_ID")?,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::optional_secret;
+    use super::{normalize_libsql, optional_secret};
+
+    #[test]
+    fn the_scheme_turso_displays_is_accepted() {
+        assert_eq!(
+            normalize_libsql("libsql://vital-adamskie.turso.io"),
+            "https://vital-adamskie.turso.io"
+        );
+    }
+
+    #[test]
+    fn an_https_url_is_left_alone() {
+        assert_eq!(
+            normalize_libsql("https://vital-adamskie.turso.io"),
+            "https://vital-adamskie.turso.io"
+        );
+    }
 
     #[test]
     fn a_blank_secret_is_the_same_as_an_unset_one() {

@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use libsql::{Connection, Row, params};
 use serde::{Deserialize, Serialize};
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
@@ -14,9 +15,8 @@ use uuid::Uuid;
 use crate::auth::extract::AuthUser;
 use crate::auth::{Role, jwt, password};
 use crate::error::{AppError, AppResult};
-use crate::sheets::store;
 use crate::state::AppState;
-use crate::users::model::{UpdateUser, User, clean_username};
+use crate::users::model::{clean_optional, clean_username, full_name, parse_uuid};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,18 +46,16 @@ pub struct UserResponse {
 }
 
 impl UserResponse {
-    /// The role is taken as an argument rather than reparsed from the row, so the
-    /// caller that already validated it does not have to handle the failure twice.
-    fn from_user(user: User, role: Role) -> Self {
+    fn from_credentials(found: Credentials, role: Role) -> Self {
         Self {
-            id: user.id,
-            email: user.email,
-            username: user.username,
+            id: found.id,
+            email: found.email,
+            username: found.username,
             role,
-            full_name: user.full_name,
-            first_name: user.first_name,
-            middle_name: user.middle_name,
-            last_name: user.last_name,
+            full_name: found.full_name,
+            first_name: found.first_name,
+            middle_name: found.middle_name,
+            last_name: found.last_name,
         }
     }
 }
@@ -67,6 +65,75 @@ impl UserResponse {
 pub struct LoginResponse {
     pub token: String,
     pub user: UserResponse,
+}
+
+#[derive(Debug)]
+struct Credentials {
+    id: Uuid,
+    email: Option<String>,
+    username: String,
+    password_hash: String,
+    role: String,
+    first_name: String,
+    middle_name: Option<String>,
+    last_name: String,
+    full_name: String,
+}
+
+/// The columns every account lookup selects, in the order `Credentials::from_row`
+/// reads them. `full_name` is composed in Rust rather than by SQL, so the display
+/// name is spelled out once instead of in every statement that returns an account.
+macro_rules! credentials_columns {
+    () => {
+        "id, email, username, password_hash, role, first_name, middle_name, last_name"
+    };
+}
+
+/// Shared tail of every account lookup. `concat!` keeps the SQL a compile-time
+/// literal, so no query is ever assembled from runtime strings.
+macro_rules! credentials_select {
+    ($predicate:literal) => {
+        concat!(
+            "select ",
+            credentials_columns!(),
+            " from users where ",
+            $predicate
+        )
+    };
+}
+
+impl Credentials {
+    fn from_row(row: &Row) -> AppResult<Self> {
+        let first_name: String = row.get(5)?;
+        let middle_name: Option<String> = row.get(6)?;
+        let last_name: String = row.get(7)?;
+
+        Ok(Self {
+            id: parse_uuid(&row.get::<String>(0)?)?,
+            email: row.get(1)?,
+            username: row.get(2)?,
+            password_hash: row.get(3)?,
+            role: row.get(4)?,
+            full_name: full_name(&first_name, middle_name.as_deref(), &last_name),
+            first_name,
+            middle_name,
+            last_name,
+        })
+    }
+}
+
+/// Runs an account lookup that returns at most one row.
+async fn find_account(
+    conn: &Connection,
+    sql: &str,
+    params: impl libsql::params::IntoParams,
+) -> AppResult<Option<Credentials>> {
+    let mut rows = conn.query(sql, params).await?;
+
+    match rows.next().await? {
+        Some(row) => Credentials::from_row(&row).map(Some),
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,12 +206,17 @@ async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> AppResult<Json<LoginResponse>> {
-    // Lowercased for the log line below as much as for the lookup: the store matches
-    // case insensitively either way, but the warnings should read the same whatever
-    // case the caller typed, or the same guessing run looks like several.
+    // Email is stored lowercased and usernames are always lowercase, so one
+    // lowercased needle matches either column.
     let identifier = body.identifier.trim().to_lowercase();
 
-    let found = store::users::find_by_identifier(&state.sheets, &identifier).await?;
+    let conn = state.db.conn()?;
+    let found = find_account(
+        &conn,
+        credentials_select!("email = ?1 or username = ?1"),
+        [identifier.as_str()],
+    )
+    .await?;
 
     // When no account matches, still spend one argon2 verification against a dummy
     // hash so timing does not reveal which accounts exist.
@@ -162,7 +234,7 @@ async fn login(
         return Err(AppError::InvalidCredentials);
     }
 
-    let role: Role = found.user.role.parse()?;
+    let role: Role = found.role.parse()?;
 
     // Checked only after the password, so a wrong portal on a bad password still
     // reads "invalid credentials" and reveals neither the account nor its role.
@@ -173,22 +245,23 @@ async fn login(
         return Err(AppError::PortalMismatch(role));
     }
 
-    let token = jwt::encode(&state.jwt_secret, found.user.id, role)?;
+    let token = jwt::encode(&state.jwt_secret, found.id, role)?;
 
     Ok(Json(LoginResponse {
         token,
-        user: UserResponse::from_user(found.user, role),
+        user: UserResponse::from_credentials(found, role),
     }))
 }
 
 async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {
-    let found = store::users::find_by_id(&state.sheets, auth.id)
+    let conn = state.db.conn()?;
+    let found = find_account(&conn, credentials_select!("id = ?1"), [auth.id.to_string()])
         .await?
         .ok_or(AppError::NotFound)?;
 
-    let role: Role = found.user.role.parse()?;
+    let role: Role = found.role.parse()?;
 
-    Ok(Json(UserResponse::from_user(found.user, role)))
+    Ok(Json(UserResponse::from_credentials(found, role)))
 }
 
 /// Resolves the email bind for a profile update. `None` leaves it unchanged. Names
@@ -257,46 +330,42 @@ async fn update_me(
         return Err(AppError::BadRequest("Last name is required".to_owned()));
     }
 
-    // Read first, then write. There is no single statement that edits a row in place
-    // any more, so the account is fetched to learn what the edit must preserve.
-    let current = store::users::find_by_id(&state.sheets, auth.id)
+    let conn = state.db.conn()?;
+    let current = find_account(&conn, credentials_select!("id = ?1"), [auth.id.to_string()])
         .await?
-        .ok_or(AppError::NotFound)?
-        .user;
+        .ok_or(AppError::NotFound)?;
 
     let is_admin = auth.role.is_admin();
     let email = resolve_email(is_admin, body.email.as_deref(), current.email.as_deref())?;
     let username = resolve_username(is_admin, body.username.as_deref(), &current.username)?;
 
-    // The account's own role goes back in unchanged. The edit rewrites the whole row,
-    // so omitting it would blank the cell and quietly demote whoever saved a profile.
-    let role: Role = current.role.parse()?;
+    // RETURNING reflects the new values, so full_name is composed from them.
+    let found = find_account(
+        &conn,
+        concat!(
+            "update users
+             set first_name = ?1, middle_name = ?2, last_name = ?3,
+                 email = coalesce(?4, email), username = coalesce(?5, username),
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             where id = ?6
+             returning ",
+            credentials_columns!()
+        ),
+        params![
+            body.first_name.trim(),
+            clean_optional(body.middle_name.as_deref()),
+            body.last_name.trim(),
+            email,
+            username,
+            auth.id.to_string(),
+        ],
+    )
+    .await?
+    .ok_or(AppError::NotFound)?;
 
-    // `None` from the resolvers means "leave it alone", which the SQL said with
-    // `coalesce($4, email)`. The store rewrites every column, so an unchanged email has
-    // to be carried across by hand or it would be cleared. A blank username needs no
-    // such care: the store already keeps the stored one for an absent value.
-    //
-    // Between the read above and this write, another request can change the same row,
-    // and the later write wins whole. Postgres settled that inside one statement.
-    let edit = UpdateUser {
-        email: email.or(current.email),
-        role,
-        first_name: body.first_name,
-        middle_name: body.middle_name,
-        last_name: body.last_name,
-        username,
-        // Absent leaves the hash alone. Changing a password is `/auth/password`, which
-        // asks for the current one first.
-        password: None,
-    };
+    let role: Role = found.role.parse()?;
 
-    // An email or username an admin moves onto another account's value now comes back
-    // as a 400 from the store's own check. It used to be a 409 raised by the unique
-    // index, which was also the only thing guarding this path.
-    let updated = store::users::update(&state.sheets, auth.id, &edit).await?;
-
-    Ok(Json(UserResponse::from_user(updated, role)))
+    Ok(Json(UserResponse::from_credentials(found, role)))
 }
 
 async fn change_password(
@@ -310,7 +379,8 @@ async fn change_password(
         ));
     }
 
-    let found = store::users::find_by_id(&state.sheets, auth.id)
+    let conn = state.db.conn()?;
+    let found = find_account(&conn, credentials_select!("id = ?1"), [auth.id.to_string()])
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -320,7 +390,13 @@ async fn change_password(
         return Err(AppError::InvalidCredentials);
     }
 
-    store::users::set_password(&state.sheets, auth.id, &body.new_password).await?;
+    conn.execute(
+        "update users
+         set password_hash = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         where id = ?2",
+        params![password::hash(&body.new_password)?, auth.id.to_string()],
+    )
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -192,7 +192,7 @@ export function RelayCard() {
             {unknown
               ? 'The board has not reported the relay position. Older firmware does not send it, and neither does the simulator.'
               : lockedOut
-                ? 'The board reclosed as often as it is allowed to and the overload was still there each time, so it stopped trying. Check the transformer before closing it again.'
+                ? 'The relay is being held open and will not close on its own, either because the board ran out of reclose attempts or because someone opened it from here. Check the transformer, then close it below when it is safe.'
                 : open
                   ? 'The board will try to close it again on its own once the load is back within limits.'
                   : canControl

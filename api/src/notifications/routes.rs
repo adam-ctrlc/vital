@@ -26,7 +26,7 @@ async fn register(
         return Err(AppError::BadRequest("Push token is required".to_owned()));
     }
 
-    service::register(&state.sheets, auth.id, &body).await?;
+    service::register(&state.db.conn()?, auth.id, &body).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -36,7 +36,7 @@ async fn unregister(
     auth: AuthUser,
     Json(body): Json<RegisterToken>,
 ) -> AppResult<StatusCode> {
-    service::unregister(&state.sheets, &body.token, auth.id).await?;
+    service::unregister(&state.db.conn()?, &body.token, auth.id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
