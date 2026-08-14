@@ -209,7 +209,7 @@ export function RelayCard() {
               attached. */}
           <Text variant="muted" className="text-xs leading-4">
             {!connected
-              ? 'The board is not reporting. Its last known position is shown above, and the buttons stay off until it checks in again.'
+              ? 'The board is not reporting, so the relay position is unknown rather than assumed. It could have tripped or been switched off since it was last heard from. The buttons stay off until it checks in again.'
               : unknown
                 ? 'The board has not reported the relay position. Older firmware does not send it, and neither does the simulator.'
                 : lockedOut

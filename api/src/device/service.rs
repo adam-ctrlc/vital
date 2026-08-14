@@ -167,11 +167,19 @@ pub async fn status(conn: &Connection) -> AppResult<DeviceStatus> {
     let connected = latest_hardware.is_some_and(|(recorded_at, _)| {
         readings_service::is_within_connected_window(recorded_at, now)
     });
+    // The position expires with the link. `last_seen` is deliberately not tied to it,
+    // because "the board was last here at 06:04" stays true however old it gets, while
+    // "the relay is closed" does not: the board may have tripped, been switched off, or
+    // been unplugged since, and none of that reaches us.
+    //
+    // Held past the window, one stale row reports a confident CLOSED forever, which
+    // claims the supply is reaching the load on the strength of a reading from hours
+    // ago. Unknown is the honest answer and the app already renders it.
     let (last_seen_at, last_seen_label, relay_closed) = match latest_hardware {
         Some((recorded_at, relay_closed)) => (
             Some(recorded_at),
             Some(local_label(recorded_at)),
-            relay_closed,
+            if connected { relay_closed } else { None },
         ),
         None => (None, None, None),
     };
