@@ -94,7 +94,14 @@ class Monitor {
   /// Bounded here as well as in the app and the API, because this is the copy that
   /// actually energises a fault: a zero would close straight back into it with no wait
   /// at all. The range matches the database check constraint.
-  void setRecloseDelay(unsigned long seconds);
+  ///
+  /// Reports whether it was taken, so the caller knows whether a value is worth
+  /// persisting. Writing a rejected one to NVS would make it the value that survives
+  /// the next reboot, which is the opposite of what rejecting it was for.
+  bool setRecloseDelay(unsigned long seconds);
+
+  /// The live reclose wait in seconds, for persisting it and for the display.
+  unsigned long recloseDelaySeconds() const { return recloseDelayMs / 1000UL; }
 
   /// The contacts are open and current is still flowing through them.
   ///

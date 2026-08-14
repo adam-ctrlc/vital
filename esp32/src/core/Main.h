@@ -53,6 +53,12 @@ class Main {
   // edit made while the board was offline sticks once it reconnects and reboots.
   void applyThresholds(const BackendClient::HeartbeatResult &ack);
 
+  // The same treatment for the reclose delay, kept separate rather than folded into
+  // applyThresholds because the two are independent settings: one bad threshold
+  // should not stop the delay being adopted, and the threshold check returns early
+  // in several places.
+  void applyRecloseDelay(const BackendClient::HeartbeatResult &ack);
+
   Lcd lcd;
   BackendClient backend;
   WifiLink net;
@@ -69,4 +75,7 @@ class Main {
   unsigned long lastReconnect = 0;
   bool tripped = false;
   bool lockedOut = false;
+  /// The delay last written to NVS, so an unchanged heartbeat does not rewrite it.
+  /// Seeded in begin() from what the monitor ended up holding.
+  unsigned long recloseSeconds = 0;
 };

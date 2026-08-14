@@ -21,6 +21,16 @@ void Main::begin() {
   monitor.setThresholds(prefs.getFloat("loadVa", 900.0f), prefs.getFloat("tripVa", 980.0f),
                         prefs.getFloat("tempC", 40.0f));
 
+  // The reclose wait is remembered the same way, and for the same reason: a board that
+  // cannot reach the backend would otherwise hold a fault open for the compiled thirty
+  // seconds no matter what the operator set, and would revert to it on every reboot.
+  //
+  // The fallback is whatever the monitor already holds rather than a literal, so the
+  // compiled default lives in one place. setRecloseDelay bounds-checks, so a corrupt
+  // stored value leaves that default standing.
+  monitor.setRecloseDelay(prefs.getUInt("recloseS", monitor.recloseDelaySeconds()));
+  recloseSeconds = monitor.recloseDelaySeconds();
+
   // A trip has to outlive a reboot, because a fault is exactly the condition that
   // browns out the supply. Coming back believing everything is fine would close
   // straight back into it.
@@ -102,7 +112,7 @@ void Main::loop() {
       if (ack.ok) {
         // Set before the command is acted on, so a close that follows a delay change
         // in the same response waits the new interval rather than the old one.
-        if (ack.recloseDelaySeconds > 0) monitor.setRecloseDelay(ack.recloseDelaySeconds);
+        applyRecloseDelay(ack);
 
         // An operator has been to look and says what to do. The board cannot reach
         // either conclusion itself: closing is the whole reason it locked out, and
@@ -121,6 +131,28 @@ void Main::post() {
   Monitor::Snapshot s = monitor.snapshot();
   backend.postReading(s.voltage, s.current, s.temperature, s.power, s.powerFactor,
                       s.frequency, s.energy, monitor.relayClosed());
+}
+
+void Main::applyRecloseDelay(const BackendClient::HeartbeatResult &ack) {
+  // Zero is how the client spells "the response did not carry one", which is what an
+  // older backend or an unparseable body looks like. Keep what we have.
+  if (!ack.ok || ack.recloseDelaySeconds == 0) return;
+  if (ack.recloseDelaySeconds == recloseSeconds) return;
+
+  if (!monitor.setRecloseDelay(ack.recloseDelaySeconds)) {
+    Serial.print("rejected out of range reclose delay: ");
+    Serial.println(ack.recloseDelaySeconds);
+    return;
+  }
+
+  // Written only after the monitor took it, so a value refused for being out of range
+  // never becomes the one that survives the next reboot.
+  recloseSeconds = ack.recloseDelaySeconds;
+  prefs.putUInt("recloseS", recloseSeconds);
+
+  Serial.print("reclose delay updated -> ");
+  Serial.print(recloseSeconds);
+  Serial.println("s");
 }
 
 void Main::applyThresholds(const BackendClient::HeartbeatResult &ack) {

@@ -73,10 +73,11 @@ void Monitor::openByOperator(unsigned long now) {
   applyRelay();
 }
 
-void Monitor::setRecloseDelay(unsigned long seconds) {
-  if (seconds < MIN_RECLOSE_SECONDS || seconds > MAX_RECLOSE_SECONDS) return;
+bool Monitor::setRecloseDelay(unsigned long seconds) {
+  if (seconds < MIN_RECLOSE_SECONDS || seconds > MAX_RECLOSE_SECONDS) return false;
 
   recloseDelayMs = seconds * 1000UL;
+  return true;
 }
 
 void Monitor::setThresholds(float alarm, float trip, float temp) {
