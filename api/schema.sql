@@ -59,14 +59,22 @@ create index if not exists readings_source_recorded_at_idx on readings (source, 
 
 create table if not exists alerts (
     id               integer primary key autoincrement,
-    reading_id       integer references readings (id),
+    -- `set null` rather than the default, which is to refuse. An alert is a record of
+    -- something that happened and outlives the row that triggered it; blocking the
+    -- delete instead would make the reading undeletable for as long as the alert
+    -- exists, which is forever.
+    reading_id       integer references readings (id) on delete set null,
     kind             text not null check (kind in ('overload', 'temperature')),
     message          text not null,
     value            real not null,
     threshold        real not null,
     created_at       text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     acknowledged_at  text,
-    acknowledged_by  text references users (id),
+    -- Likewise. Without `set null` this refuses, and deleting any user who had ever
+    -- acknowledged an alert failed with a foreign key error and a 500. Losing who
+    -- acknowledged it is the right trade: the alert, its time and its response are
+    -- the record worth keeping, and an account that no longer exists cannot be named.
+    acknowledged_by  text references users (id) on delete set null,
     response_ms      integer,
     -- When a device was last told, as distinct from when the alert opened. An alarm
     -- that speaks once and goes quiet while the fault continues is not an alarm.
