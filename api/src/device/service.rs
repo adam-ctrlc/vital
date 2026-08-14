@@ -97,6 +97,7 @@ pub async fn record_heartbeat(conn: &Connection, heartbeat: &Heartbeat) -> AppRe
         trip_threshold_va: settings.trip_threshold_va,
         temp_threshold_c: settings.temp_threshold_c,
         reclose_delay_seconds: settings.reclose_delay_seconds,
+        trip_confirm_seconds: settings.trip_confirm_seconds,
         relay_command,
     })
 }

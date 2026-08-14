@@ -58,6 +58,7 @@ BackendClient::HeartbeatResult BackendClient::postHeartbeat(bool lockedOut) {
       }
 
       result.recloseDelaySeconds = ack["recloseDelaySeconds"] | 0UL;
+      result.tripConfirmSeconds = ack["tripConfirmSeconds"] | 0UL;
     }
   }
   http.end();

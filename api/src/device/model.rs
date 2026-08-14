@@ -62,4 +62,6 @@ pub struct HeartbeatAck {
     pub relay_command: Option<String>,
     /// How long to wait before each reclose attempt, in seconds.
     pub reclose_delay_seconds: i32,
+    /// How long the load must stay above the trip level before the contacts open.
+    pub trip_confirm_seconds: i32,
 }

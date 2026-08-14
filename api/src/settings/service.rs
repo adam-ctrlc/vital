@@ -8,7 +8,7 @@ pub async fn load(conn: &Connection) -> AppResult<Settings> {
     let mut rows = conn
         .query(
             "select load_threshold_va, trip_threshold_va, temp_threshold_c, reclose_delay_seconds,
-                    source_mode, updated_at
+                    trip_confirm_seconds, source_mode, updated_at
              from settings where id = 1",
             (),
         )
@@ -24,17 +24,21 @@ pub async fn load(conn: &Connection) -> AppResult<Settings> {
 pub async fn update(conn: &Connection, settings: &SettingsUpdate) -> AppResult<Settings> {
     let mut rows = conn
         .query(
+            // `coalesce` on the last one, so a client that does not know the field
+            // leaves it alone instead of overwriting it.
             "update settings set load_threshold_va = ?, trip_threshold_va = ?,
                                  temp_threshold_c = ?, reclose_delay_seconds = ?,
+                                 trip_confirm_seconds = coalesce(?, trip_confirm_seconds),
                                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              where id = 1
              returning load_threshold_va, trip_threshold_va, temp_threshold_c,
-                       reclose_delay_seconds, source_mode, updated_at",
+                       reclose_delay_seconds, trip_confirm_seconds, source_mode, updated_at",
             params![
                 settings.load_threshold_va,
                 settings.trip_threshold_va,
                 settings.temp_threshold_c,
                 settings.reclose_delay_seconds,
+                settings.trip_confirm_seconds,
             ],
         )
         .await?;
@@ -49,7 +53,7 @@ pub async fn set_source(conn: &Connection, mode: &str) -> AppResult<Settings> {
                                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              where id = 1
              returning load_threshold_va, trip_threshold_va, temp_threshold_c,
-                       reclose_delay_seconds, source_mode, updated_at",
+                       reclose_delay_seconds, trip_confirm_seconds, source_mode, updated_at",
             params![mode],
         )
         .await?;
@@ -73,8 +77,9 @@ fn decode(row: Option<Row>) -> AppResult<Settings> {
         trip_threshold_va: row.get(1)?,
         temp_threshold_c: row.get(2)?,
         reclose_delay_seconds: row.get(3)?,
-        source_mode: row.get(4)?,
-        updated_at: parse_timestamp(&row.get::<String>(5)?)?,
+        trip_confirm_seconds: row.get(4)?,
+        source_mode: row.get(5)?,
+        updated_at: parse_timestamp(&row.get::<String>(6)?)?,
     })
 }
 

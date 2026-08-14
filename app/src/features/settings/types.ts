@@ -14,6 +14,14 @@ export type Settings = {
    * need a reflash. It travels to the board on its heartbeat.
    */
   recloseDelaySeconds: number;
+  /**
+   * How long the load must stay above the trip threshold before the relay opens.
+   *
+   * The counterpart to the wait above, and its opposite: this one runs while the load
+   * is still connected and decides whether to cut it. It reaches the board on the same
+   * heartbeat.
+   */
+  tripConfirmSeconds: number;
   sourceMode: SourceMode;
   updatedAt: string;
 };

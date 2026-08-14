@@ -30,6 +30,8 @@ class BackendClient {
     RelayCommand relayCommand = RELAY_NONE;
     /// The operator's reclose wait. Zero means the response did not carry one.
     unsigned long recloseDelaySeconds = 0;
+    /// The operator's trip wait. Zero means the response did not carry one.
+    unsigned long tripConfirmSeconds = 0;
   };
 
   HeartbeatResult postHeartbeat(bool lockedOut);

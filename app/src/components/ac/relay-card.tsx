@@ -23,6 +23,13 @@ import {
   TICKS,
   formatDelay,
 } from '@/features/settings/reclose-delay';
+import {
+  TRIP_DEFAULT_SECONDS,
+  TRIP_MAX_SECONDS,
+  TRIP_MIN_SECONDS,
+  TRIP_STEP_SECONDS,
+  TRIP_TICKS,
+} from '@/features/settings/trip-delay';
 import type { Settings } from '@/features/settings/types';
 import { useAppearance } from '@/lib/appearance';
 
@@ -60,6 +67,8 @@ export function RelayCard() {
   const [settings, setSettings] = useState<Settings | null>(null);
   /** The live value while the thumb is held, so the readout matches what is under it. */
   const [dragSeconds, setDragSeconds] = useState<number | null>(null);
+  /** The same, for the trip slider. Separate so dragging one cannot move the other. */
+  const [dragTrip, setDragTrip] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -120,7 +129,7 @@ export function RelayCard() {
    * The settings endpoint takes every field together, so a partial save is not on offer
    * and sending the current values is what keeps this from clearing them.
    */
-  async function saveDelay(seconds: number) {
+  async function saveTimings(next: { reclose?: number; trip?: number }) {
     if (!settings) return;
 
     try {
@@ -129,18 +138,21 @@ export function RelayCard() {
         settings.loadThresholdVa,
         settings.tripThresholdVa,
         settings.tempThresholdC,
-        seconds
+        next.reclose ?? settings.recloseDelaySeconds,
+        next.trip ?? settings.tripConfirmSeconds
       );
       setSettings(result);
     } catch (caught) {
       setNote((caught as Error).message);
-      // Put back to what the server still holds, rather than leaving the thumb showing
-      // a value that was refused.
+      // Put both back to what the server still holds, rather than leaving a thumb
+      // showing a value that was refused.
       setDragSeconds(null);
+      setDragTrip(null);
     }
   }
 
   const delay = settings?.recloseDelaySeconds ?? DEFAULT_SECONDS;
+  const trip = settings?.tripConfirmSeconds ?? TRIP_DEFAULT_SECONDS;
   const position = status?.relayClosed;
   const open = position === false;
   const unknown = position === null || position === undefined;
@@ -265,6 +277,48 @@ export function RelayCard() {
 
           <View className="border-border gap-1 border-t pt-3">
             <View className="flex-row items-baseline justify-between">
+              <Text className="text-sm font-medium">Trip delay</Text>
+              <Text variant="muted" className="text-[10px]">
+                {formatDelay(dragTrip ?? trip)}
+              </Text>
+            </View>
+            <Text variant="muted" className="text-xs leading-4">
+              How long the load has to stay over the trip threshold before the relay
+              opens. Shorter cuts a real fault sooner; longer rides out a brief surge
+              without dropping the load.
+            </Text>
+            <Slider
+              minimumValue={TRIP_MIN_SECONDS}
+              maximumValue={TRIP_MAX_SECONDS}
+              step={TRIP_STEP_SECONDS}
+              value={trip}
+              disabled={!settings}
+              minimumTrackTintColor={primary.hex}
+              maximumTrackTintColor={muted}
+              thumbTintColor={primary.hex}
+              onValueChange={(seconds) => setDragTrip(Math.round(seconds))}
+              onSlidingComplete={(seconds) => {
+                void saveTimings({ trip: Math.round(seconds) });
+                setDragTrip(null);
+              }}
+            />
+            <View className="-mt-1 flex-row justify-between px-2">
+              {TRIP_TICKS.map((seconds) => (
+                <View
+                  key={seconds}
+                  className="w-px rounded-full"
+                  style={{
+                    height: 6,
+                    backgroundColor: seconds <= (dragTrip ?? trip) ? primary.hex : muted,
+                    opacity: seconds <= (dragTrip ?? trip) ? 0.9 : 0.35,
+                  }}
+                />
+              ))}
+            </View>
+          </View>
+
+          <View className="border-border gap-1 border-t pt-3">
+            <View className="flex-row items-baseline justify-between">
               <Text className="text-sm font-medium">Reclose delay</Text>
               <Text variant="muted" className="text-[10px]">
                 {formatDelay(dragSeconds ?? delay)}
@@ -287,7 +341,7 @@ export function RelayCard() {
               // writes one value rather than one per notch crossed.
               onValueChange={(seconds) => setDragSeconds(Math.round(seconds))}
               onSlidingComplete={(seconds) => {
-                void saveDelay(Math.round(seconds));
+                void saveTimings({ reclose: Math.round(seconds) });
                 setDragSeconds(null);
               }}
             />

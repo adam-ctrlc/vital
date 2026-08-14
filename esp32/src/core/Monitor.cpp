@@ -73,6 +73,13 @@ void Monitor::openByOperator(unsigned long now) {
   applyRelay();
 }
 
+bool Monitor::setTripConfirm(unsigned long seconds) {
+  if (seconds < MIN_TRIP_CONFIRM_SECONDS || seconds > MAX_TRIP_CONFIRM_SECONDS) return false;
+
+  tripConfirmMs = seconds * 1000UL;
+  return true;
+}
+
 bool Monitor::setRecloseDelay(unsigned long seconds) {
   if (seconds < MIN_RECLOSE_SECONDS || seconds > MAX_RECLOSE_SECONDS) return false;
 
@@ -159,7 +166,7 @@ void Monitor::updateStatus(unsigned long now) {
         break;
       }
       if (overTripSince == 0) overTripSince = now;
-      if (now - overTripSince >= TRIP_CONFIRM_MS) {
+      if (now - overTripSince >= tripConfirmMs) {
         status = STATUS_OVERLOAD;
         trippedAt = now;
 
@@ -335,7 +342,7 @@ String Monitor::relayStatusLine() const {
   // while there is still time to shed load and avoid the trip entirely.
   if (status == STATUS_WARNING && overTripSince != 0) {
     const unsigned long held = millis() - overTripSince;
-    const unsigned long left = held >= TRIP_CONFIRM_MS ? 0 : (TRIP_CONFIRM_MS - held) / 1000UL + 1;
+    const unsigned long left = held >= tripConfirmMs ? 0 : (tripConfirmMs - held) / 1000UL + 1;
 
     return "TRIPPING IN " + String(left) + "s";
   }

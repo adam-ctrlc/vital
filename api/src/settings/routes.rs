@@ -52,6 +52,20 @@ async fn update(
         ));
     }
 
+    // Checked only when it was sent, since absent means "leave it as it is" and the
+    // stored value already passed this on its way in.
+    //
+    // The floor is one second rather than none: a transformer draws several times its
+    // rated current for a fraction of a second at switch-on, and at zero the board
+    // would cut the load on that inrush every time it closed and never get past it.
+    if let Some(seconds) = body.trip_confirm_seconds
+        && !(1..=60).contains(&seconds)
+    {
+        return Err(AppError::BadRequest(
+            "trip delay must be between 1 and 60 seconds".to_owned(),
+        ));
+    }
+
     Ok(Json(service::update(&state.db.conn()?, &body).await?))
 }
 

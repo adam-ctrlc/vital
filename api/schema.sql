@@ -101,6 +101,17 @@ create table if not exists settings (
     temp_threshold_c      real not null default 40,
     reclose_delay_seconds integer not null default 30
         check (reclose_delay_seconds between 5 and 600),
+    -- How long the load must stay above the trip level before the contacts open.
+    --
+    -- Not the same wait as the one above, and easy to confuse: this one runs while the
+    -- load is still connected and decides whether to cut it, the other runs while it is
+    -- disconnected and decides when to try again.
+    --
+    -- The floor is 1 rather than 0 because a transformer draws several times its rated
+    -- current for a fraction of a second at switch-on. At 0 the board would cut the
+    -- load on that inrush every time it closed, and never get past it.
+    trip_confirm_seconds  integer not null default 3
+        check (trip_confirm_seconds between 1 and 60),
     source_mode           text not null default 'hardware',
     created_at            text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at            text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

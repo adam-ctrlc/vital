@@ -103,6 +103,17 @@ class Monitor {
   /// The live reclose wait in seconds, for persisting it and for the display.
   unsigned long recloseDelaySeconds() const { return recloseDelayMs / 1000UL; }
 
+  /// Adopts how long the load must stay over the trip level before the contacts open.
+  ///
+  /// The other half of the pair, and the opposite of the one above: this wait runs
+  /// while the load is still connected and decides whether to cut it.
+  ///
+  /// Reports whether it was taken, for the same reason the reclose setter does.
+  bool setTripConfirm(unsigned long seconds);
+
+  /// The live trip wait in seconds, for persisting it and for the display.
+  unsigned long tripConfirmSeconds() const { return tripConfirmMs / 1000UL; }
+
   /// The contacts are open and current is still flowing through them.
   ///
   /// Acted on by re-driving the output, then reported if it persists. A pin that never
@@ -144,6 +155,14 @@ class Monitor {
 
   static constexpr unsigned long SAMPLE_INTERVAL_MS = 1000;
   static constexpr unsigned long TRIP_CONFIRM_MS = 3000;
+
+  /// Bounds on a trip wait handed over by a heartbeat, matching the database check.
+  ///
+  /// The floor is a second rather than none: a transformer draws several times its
+  /// rated current for a fraction of a second at switch-on, and at zero the board would
+  /// cut the load on that inrush every time it closed and never get past it.
+  static constexpr unsigned long MIN_TRIP_CONFIRM_SECONDS = 1;
+  static constexpr unsigned long MAX_TRIP_CONFIRM_SECONDS = 60;
 
   /// How long the contacts stay open before each reclose attempt.
   ///
@@ -253,6 +272,8 @@ class Monitor {
   bool lockedOut = false;
   /// The live reclose wait, seeded from the compiled default until a heartbeat sets it.
   unsigned long recloseDelayMs = RECLOSE_DELAY_MS;
+  /// The live trip wait, seeded from the compiled default until a heartbeat sets it.
+  unsigned long tripConfirmMs = TRIP_CONFIRM_MS;
   /// When an operator last closed it, for spotting a close the protection undid.
   unsigned long manualClosedAt = 0;
   /// Until when another close request is refused.

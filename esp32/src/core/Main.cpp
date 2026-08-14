@@ -31,6 +31,9 @@ void Main::begin() {
   monitor.setRecloseDelay(prefs.getUInt("recloseS", monitor.recloseDelaySeconds()));
   recloseSeconds = monitor.recloseDelaySeconds();
 
+  monitor.setTripConfirm(prefs.getUInt("tripS", monitor.tripConfirmSeconds()));
+  tripSeconds = monitor.tripConfirmSeconds();
+
   // A trip has to outlive a reboot, because a fault is exactly the condition that
   // browns out the supply. Coming back believing everything is fine would close
   // straight back into it.
@@ -113,6 +116,7 @@ void Main::loop() {
         // Set before the command is acted on, so a close that follows a delay change
         // in the same response waits the new interval rather than the old one.
         applyRecloseDelay(ack);
+        applyTripConfirm(ack);
 
         // An operator has been to look and says what to do. The board cannot reach
         // either conclusion itself: closing is the whole reason it locked out, and
@@ -152,6 +156,24 @@ void Main::applyRecloseDelay(const BackendClient::HeartbeatResult &ack) {
 
   Serial.print("reclose delay updated -> ");
   Serial.print(recloseSeconds);
+  Serial.println("s");
+}
+
+void Main::applyTripConfirm(const BackendClient::HeartbeatResult &ack) {
+  if (!ack.ok || ack.tripConfirmSeconds == 0) return;
+  if (ack.tripConfirmSeconds == tripSeconds) return;
+
+  if (!monitor.setTripConfirm(ack.tripConfirmSeconds)) {
+    Serial.print("rejected out of range trip delay: ");
+    Serial.println(ack.tripConfirmSeconds);
+    return;
+  }
+
+  tripSeconds = ack.tripConfirmSeconds;
+  prefs.putUInt("tripS", tripSeconds);
+
+  Serial.print("trip delay updated -> ");
+  Serial.print(tripSeconds);
   Serial.println("s");
 }
 

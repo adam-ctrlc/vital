@@ -276,6 +276,7 @@ struct LiveState {
     trip_threshold_va: f64,
     temp_threshold_c: f64,
     reclose_delay_seconds: i32,
+    trip_confirm_seconds: i32,
     source_mode: String,
     updated_at: DateTime<Utc>,
     latest_simulator_ms: Option<i64>,
@@ -289,10 +290,11 @@ impl LiveState {
             trip_threshold_va: row.get(1)?,
             temp_threshold_c: row.get(2)?,
             reclose_delay_seconds: row.get(3)?,
-            source_mode: row.get(4)?,
-            updated_at: model::parse_timestamp(&row.get::<String>(5)?)?,
-            latest_simulator_ms: row.get(6)?,
-            device_ip: row.get(7)?,
+            trip_confirm_seconds: row.get(4)?,
+            source_mode: row.get(5)?,
+            updated_at: model::parse_timestamp(&row.get::<String>(6)?)?,
+            latest_simulator_ms: row.get(7)?,
+            device_ip: row.get(8)?,
         })
     }
 
@@ -302,6 +304,7 @@ impl LiveState {
             trip_threshold_va: self.trip_threshold_va,
             temp_threshold_c: self.temp_threshold_c,
             reclose_delay_seconds: self.reclose_delay_seconds,
+            trip_confirm_seconds: self.trip_confirm_seconds,
             source_mode: self.source_mode.clone(),
             updated_at: self.updated_at,
         }
@@ -320,7 +323,7 @@ async fn load_live_state(conn: &Connection) -> AppResult<LiveState> {
     let mut rows = conn
         .query(
             "select s.load_threshold_va, s.trip_threshold_va, s.temp_threshold_c, s.reclose_delay_seconds,
-                    s.source_mode, s.updated_at,
+                    s.trip_confirm_seconds, s.source_mode, s.updated_at,
                     (select strftime('%s', recorded_at) * 1000
                      from readings where source = 'simulator'
                      order by recorded_at desc limit 1) as latest_simulator_ms,

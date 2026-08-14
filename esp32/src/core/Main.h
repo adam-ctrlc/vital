@@ -59,6 +59,9 @@ class Main {
   // in several places.
   void applyRecloseDelay(const BackendClient::HeartbeatResult &ack);
 
+  // And for the trip wait, which is remembered the same way and for the same reason.
+  void applyTripConfirm(const BackendClient::HeartbeatResult &ack);
+
   Lcd lcd;
   BackendClient backend;
   WifiLink net;
@@ -78,4 +81,6 @@ class Main {
   /// The delay last written to NVS, so an unchanged heartbeat does not rewrite it.
   /// Seeded in begin() from what the monitor ended up holding.
   unsigned long recloseSeconds = 0;
+  /// The trip wait last written to NVS, so an unchanged heartbeat does not rewrite it.
+  unsigned long tripSeconds = 0;
 };
