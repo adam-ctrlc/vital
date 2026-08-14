@@ -51,6 +51,8 @@ export function RelayCard() {
   const [status, setStatus] = useState<DeviceStatus | null>(null);
   const [overload, setOverload] = useState(false);
   const [current, setCurrent] = useState<number | null>(null);
+  /** Whether the board is still posting. The only thing the buttons are gated on. */
+  const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -73,6 +75,7 @@ export function RelayCard() {
       setSettings(current);
       setOverload(live.status === 'overload' || live.overTemperature);
       setCurrent(live.currentA);
+      setConnected(live.connected);
     } catch {
       // Left as it was; the poll tries again.
     } finally {
@@ -142,18 +145,22 @@ export function RelayCard() {
   const open = position === false;
   const unknown = position === null || position === undefined;
   const lockedOut = status?.relayLockedOut ?? false;
-  // Manual control is for when the protection is doing something, which is what an
-  // operator would be reacting to. With a healthy load closed there is nothing to
-  // decide, so the buttons say so rather than inviting a pointless switch.
+  // One condition: the board is still posting. Nothing about the load, the position or
+  // the lockout gates the buttons any more.
   //
-  // A reported lockout enables the buttons on its own, ahead of the position check.
-  // The two facts arrive by different routes: the position comes from the newest
-  // hardware reading, the lockout from the heartbeat. A board whose meter has stopped
-  // answering posts no readings at all, so the position freezes at whatever it last
-  // was, possibly closed, while the heartbeat keeps reporting the lockout truthfully.
-  // Gated on position alone, that board showed "Locked out" with both buttons greyed
-  // out: the one screen that can release it, refusing to.
-  const canControl = lockedOut || (!unknown && (overload || open));
+  // Every version of this that reasoned about state got somebody stuck, because the
+  // facts it reasoned from arrive by different routes and disagree exactly when things
+  // are going wrong. The position comes from the newest hardware reading and the
+  // lockout from the heartbeat, and a board whose meter has stopped answering posts no
+  // readings at all, so the position freezes while the heartbeat keeps reporting the
+  // truth. That combination showed "Locked out" with both buttons greyed out: the one
+  // screen that can release it, refusing to.
+  //
+  // Nothing was gained by being clever. The protection does not live here: an overload
+  // opens the contacts on the board regardless of what this screen offers, so a button
+  // enabled at an unhelpful moment costs a wasted tap, while one disabled at the wrong
+  // moment costs somebody a trip to the panel.
+  const canControl = connected;
   // Contacts reported open with current still flowing. One of those is wrong, and the
   // measurement is the one with evidence behind it.
   const stuck = open && (current ?? 0) >= 0.15;
@@ -196,16 +203,22 @@ export function RelayCard() {
             </Text>
           </View>
 
+          {/* Ordered by what stops you acting, then by what the relay is doing. Not
+              reporting comes first because it is the only state where the buttons will
+              not do anything, and saying so beats a greyed out control with no reason
+              attached. */}
           <Text variant="muted" className="text-xs leading-4">
-            {unknown
-              ? 'The board has not reported the relay position. Older firmware does not send it, and neither does the simulator.'
-              : lockedOut
-                ? 'The relay is being held open and will not close on its own, either because the board ran out of reclose attempts or because someone opened it from here. Check the transformer, then close it below when it is safe.'
-                : open
-                  ? 'The board will try to close it again on its own once the load is back within limits.'
-                  : canControl
-                    ? 'The supply is over a limit. You can cut it now rather than waiting for the board to.'
-                    : 'The supply can reach the load. Whether anything is drawing from it is a separate question, and the current reading answers that.'}
+            {!connected
+              ? 'The board is not reporting. Its last known position is shown above, and the buttons stay off until it checks in again.'
+              : unknown
+                ? 'The board has not reported the relay position. Older firmware does not send it, and neither does the simulator.'
+                : lockedOut
+                  ? 'The relay is being held open and will not close on its own, either because the board ran out of reclose attempts or because someone opened it from here. Check the transformer, then close it below when it is safe.'
+                  : open
+                    ? 'The board will try to close it again on its own once the load is back within limits.'
+                    : overload
+                      ? 'The supply is over a limit. You can cut it now rather than waiting for the board to.'
+                      : 'The supply can reach the load. Whether anything is drawing from it is a separate question, and the current reading answers that.'}
           </Text>
 
           {stuck ? (
