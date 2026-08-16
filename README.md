@@ -33,7 +33,7 @@ The API is stateless. Serverless functions cannot keep a background loop alive, 
 
 ## Tech stack
 
-**API** Rust, Axum 0.8, libsql against Turso (SQLite over HTTP), JWT (HS256) auth, argon2 password hashing. Deployed to Vercel in the `sin1` region.
+**API** Rust, Axum 0.8, libsql against Turso (SQLite over HTTP), JWT (HS256) auth, argon2 password hashing. Deployed to Vercel in the `hnd1` region, which is where the database is: every query is an HTTP request, so the two being in different countries cost about seventy milliseconds each way, every time.
 
 **App** Expo SDK 54, Expo Router, React Native 0.81, NativeWind (Tailwind), React Native Reusables, react-native-reanimated and react-native-svg for the waveform and charts, Phosphor icons, KaTeX pre-rendered offline for the formulas.
 
