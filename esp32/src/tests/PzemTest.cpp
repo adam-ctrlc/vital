@@ -9,7 +9,7 @@ void PzemTest::begin() {
   delay(200);
   Serial.println();
   Serial.println("PZEM test");
-  Serial.println("Wiring: PZEM TX to P16, PZEM RX to P17, 5V, GND. Relay on P5.");
+  Serial.println("Wiring: PZEM TX to P16, PZEM RX to P17, 5V, GND. Relay on P18.");
 
   meter.begin();
   relay.begin();

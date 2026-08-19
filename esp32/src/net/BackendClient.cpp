@@ -66,10 +66,12 @@ BackendClient::HeartbeatResult BackendClient::postHeartbeat(bool lockedOut) {
   return result;
 }
 
-bool BackendClient::postReading(float voltage, float current, float temperature,
-                                float power, float pf, float frequency, float energy,
-                                bool relayClosed) {
-  if (WiFi.status() != WL_CONNECTED) return false;
+BackendClient::ReadingResult BackendClient::postReading(float voltage, float current,
+                                                       float temperature, float power,
+                                                       float pf, float frequency,
+                                                       float energy, bool relayClosed) {
+  ReadingResult result;
+  if (WiFi.status() != WL_CONNECTED) return result;
 
   JsonDocument doc;
   bool any = false;
@@ -83,7 +85,7 @@ bool BackendClient::postReading(float voltage, float current, float temperature,
 
   if (!any) {
     Serial.println("no readings to send, skipping post.");
-    return false;
+    return result;
   }
 
   // Added after the emptiness check on purpose. A contact position is not a
@@ -105,14 +107,33 @@ bool BackendClient::postReading(float voltage, float current, float temperature,
   int code = http.POST(body);
   Serial.print("POST /readings -> ");
   Serial.println(code);
-  if (code > 0) {
+
+  if (code >= 200 && code < 300) {
+    result.ok = true;
+
+    // The response used to be logged and thrown away. It now carries whatever an
+    // operator asked the relay to do, handed over exactly once, so a command reaches
+    // the board within one posting interval without a heartbeat of its own.
+    JsonDocument ack;
+    const String payload = http.getString();
+    Serial.println(payload);
+
+    if (!deserializeJson(ack, payload)) {
+      const char *command = ack["relayCommand"] | "";
+      if (strcmp(command, "open") == 0) {
+        result.relayCommand = RELAY_OPEN;
+      } else if (strcmp(command, "close") == 0) {
+        result.relayCommand = RELAY_CLOSE;
+      }
+    }
+  } else if (code > 0) {
     Serial.println(http.getString());
   } else {
     Serial.println(http.errorToString(code));
   }
   http.end();
 
-  return code >= 200 && code < 300;
+  return result;
 }
 
 WiFiClientSecure &BackendClient::shared() {

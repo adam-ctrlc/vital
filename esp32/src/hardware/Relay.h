@@ -18,6 +18,10 @@ class Relay {
 
   bool isClosed() const { return closed_; }
 
+  /// Which pin it drives, so a caller can say so in a log without being handed the
+  /// pin map. Diagnostics that name the wrong terminal are worse than none.
+  uint8_t number() const { return pin; }
+
  private:
   uint8_t pin;
   uint8_t onLevel;

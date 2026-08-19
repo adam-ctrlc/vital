@@ -36,8 +36,20 @@ class BackendClient {
 
   HeartbeatResult postHeartbeat(bool lockedOut);
 
-  bool postReading(float voltage, float current, float temperature,
-                   float power, float pf, float frequency, float energy, bool relayClosed);
+  /// What the backend said when the reading was accepted.
+  ///
+  /// The relay command rides on this response because the board makes this request
+  /// every few seconds anyway. Carrying it on the heartbeat instead meant running the
+  /// heartbeat at the same rate purely for this field, which doubled the number of TLS
+  /// exchanges and with them the transmit bursts this board's supply has to survive.
+  struct ReadingResult {
+    bool ok = false;
+    RelayCommand relayCommand = RELAY_NONE;
+  };
+
+  ReadingResult postReading(float voltage, float current, float temperature,
+                            float power, float pf, float frequency, float energy,
+                            bool relayClosed);
 
  private:
   /// The one TLS client, kept alive between posts.

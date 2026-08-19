@@ -48,7 +48,7 @@ void NetTest::loop() {
   net.connect();
   // Temperature only, and the contacts reported closed because there are none here to
   // be open. Every other field is NAN, which the client drops from the payload.
-  bool ok = backend.postReading(NAN, NAN, t, NAN, NAN, NAN, NAN, true);
+  const bool ok = backend.postReading(NAN, NAN, t, NAN, NAN, NAN, NAN, true).ok;
 
   String line1 = "T: " + String(t, 2) + " C";
   String line2;

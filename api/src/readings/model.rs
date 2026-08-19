@@ -332,3 +332,24 @@ mod input_tests {
         assert!(!idle.is_empty());
     }
 }
+
+/// What the board gets back when it posts a reading.
+///
+/// The reading it just wrote, plus anything an operator has asked the relay to do.
+///
+/// The command rides here because the board already makes this request every few
+/// seconds and previously threw the response away. Carrying it on a heartbeat instead
+/// meant running that heartbeat six times faster than it needed to be, purely for this
+/// one field, and radio time is the scarcest thing the board has: it shares a supply
+/// with a relay coil and every transmit burst is a chance to brown the rail out.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IngestAck {
+    /// Flattened, so the response keeps the shape it has always had and older firmware
+    /// that only logs it sees no difference.
+    #[serde(flatten)]
+    pub reading: Reading,
+    /// `open`, `close`, or absent. Handed over exactly once: the next request gets
+    /// nothing, whether it is another reading or a heartbeat.
+    pub relay_command: Option<String>,
+}

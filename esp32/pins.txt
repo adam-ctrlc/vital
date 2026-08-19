@@ -35,8 +35,8 @@ RX      GPIO3 (RX0)     USB serial input, avoid
 P21     GPIO21          Free, common I2C SDA
 GND     Ground
 P19     GPIO19          Free (VSPI MISO)
-P18     GPIO18          Free (VSPI CLK)
-P5      GPIO5           Strapping pin, usable (VSPI CS)
+P18     GPIO18          Reserved here for the relay (VSPI CLK)
+P5      GPIO5           Strapping pin, free (VSPI CS)
 P17     GPIO17 (TX2)    Free, hardware UART2 TX
 P16     GPIO16 (RX2)    Free, hardware UART2 RX
 P4      GPIO4           Free, ADC2, touch
@@ -65,7 +65,7 @@ P13     GPIO13          Fully free, reserved here for the LCD I2C SDA
 P4      GPIO4           Fully free
 P16     GPIO16 (RX2)    Fully free, reserved here for the PZEM-004T
 P17     GPIO17 (TX2)    Fully free, reserved here for the PZEM-004T
-P5      GPIO5           With care, strapping, fine as an output after boot, reserved here for the relay
+P18     GPIO18          Fully free, reserved here for the relay
 P15     GPIO15          With care, strapping, must be high at boot, fine after
 P2      GPIO2           With care, strapping, onboard LED, light use only
 SVP     GPIO36          Input only, good for analog sensors (ADC1)
@@ -117,17 +117,18 @@ DS18B20 (temperature):
         drives whichever answers, so no address jumper guessing is needed.
 
 Relay module (load switching, active low):
-  IN  -> P5
+  IN  -> P18
   VCC -> 5V
   GND -> GND
   Load: live line through COM and NO, so an unpowered or still booting board
         leaves the load de-energized.
   Note: active low. Pins.h sets RELAY_ON to LOW and RELAY_OFF to HIGH, which is
         what most opto-isolated single channel boards expect.
-  Note: P5 was chosen for that polarity, not by accident. It is a strapping pin
-        with an internal pull up, so it sits HIGH from reset until setup() runs,
-        and HIGH is RELAY_OFF. Wiring the relay to an active high pin here would
-        energize the load during boot, before anything has been measured.
+  Note: P18 is an ordinary GPIO with none of the boot-time behaviour the
+        strapping pins have. It was moved here from P5, which is a strapping pin
+        that some boards pulse at power up; on an active low module that pulse
+        can close the contacts for an instant before setup() has run, which is
+        the one thing a protection relay must never do.
   Note: some boards emit a brief pulse on GPIO5 at power up. Depending on the
         module's input stage that can produce an audible click. Worth a scope
         check on real hardware; it is not a design fault.

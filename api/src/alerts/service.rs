@@ -95,7 +95,7 @@ async fn raise(
         )
         .await?;
 
-    if let Some(row) = claimed.next().await? {
+    if let Some(row) = crate::db::first_row(&mut claimed).await? {
         let alert = Alert::from_row(&row)?;
 
         tracing::info!(
@@ -118,7 +118,7 @@ async fn raise(
         )
         .await?;
 
-    if let Some(row) = active.next().await? {
+    if let Some(row) = crate::db::first_row(&mut active).await? {
         let open: i64 = row.get(0)?;
 
         tracing::debug!(
@@ -144,7 +144,7 @@ async fn raise(
         .await;
 
     let alert = match inserted {
-        Ok(mut rows) => match rows.next().await? {
+        Ok(mut rows) => match crate::db::first_row(&mut rows).await? {
             Some(row) => Alert::from_row(&row)?,
             // An insert that succeeded always returns the row it wrote, so there is
             // nothing here to announce and nothing to report.

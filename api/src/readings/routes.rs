@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::auth::extract::{AdminUser, AuthUser, DeviceAuth};
 use crate::error::{AppError, AppResult};
 use crate::page::{Page, Paging};
-use crate::readings::model::{LiveReading, Reading, ReadingInput, Status, TrendPoint};
+use crate::readings::model::{IngestAck, LiveReading, Reading, ReadingInput, Status, TrendPoint};
 use crate::readings::service;
 use crate::search;
 use crate::state::AppState;
@@ -118,7 +118,7 @@ async fn ingest(
     State(state): State<AppState>,
     _device: DeviceAuth,
     Json(body): Json<ReadingInput>,
-) -> AppResult<Json<Reading>> {
+) -> AppResult<Json<IngestAck>> {
     // Rejected here as well as in the service, so a board sending nothing gets a clear
     // 400 without a round trip to the database.
     if body.is_empty() {
@@ -138,7 +138,37 @@ async fn ingest(
     let settings = crate::settings::service::load(&conn).await?;
     let reading = service::record(&conn, body, "hardware", &settings).await?;
 
-    Ok(Json(reading))
+    // Taken after the reading is safely recorded. A command handed over on a request
+    // that then failed would be lost: it is cleared as it is read, so nothing would
+    // ever offer it again.
+    //
+    // On a connection of its own, because the transaction has to be the first thing
+    // that happens on one. The heartbeat opens its transaction on a fresh connection
+    // and works; opening one here on the connection that had just inserted the reading
+    // returned a database error in production, though not against a local server. A
+    // connection is a handle rather than a socket over HTTP, so a second one is free.
+    //
+    // Best effort, and deliberately not `?`. The reading is why the board made this
+    // request; the command is a passenger. Failing the whole call over the passenger
+    // would turn a stored measurement into a 500 and have the board treat it as lost.
+    let relay_command = match state.db.conn() {
+        Ok(command_conn) => match crate::device::service::take_relay_command(&command_conn).await {
+            Ok(command) => command,
+            Err(error) => {
+                tracing::warn!(%error, "could not read the pending relay command");
+                None
+            }
+        },
+        Err(error) => {
+            tracing::warn!(%error, "could not open a connection for the relay command");
+            None
+        }
+    };
+
+    Ok(Json(IngestAck {
+        reading,
+        relay_command,
+    }))
 }
 
 async fn history(

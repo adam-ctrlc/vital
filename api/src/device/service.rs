@@ -102,7 +102,52 @@ pub async fn record_heartbeat(conn: &Connection, heartbeat: &Heartbeat) -> AppRe
     })
 }
 
-/// Queues an operator's relay command for the board's next heartbeat.
+/// Hands over any pending relay command and clears it, exactly once.
+///
+/// The same discipline `record_heartbeat` uses, in a form the ingest route can call.
+/// `begin immediate` takes the write lock up front, so the two endpoints serialise
+/// against each other: whichever arrives second reads the row the first already
+/// cleared and gets nothing. Without that they could both take the same command away
+/// and the board would act on it twice.
+///
+/// This exists so the command can ride back on the reading the board already posts
+/// every few seconds, rather than needing a heartbeat of its own. Radio time is the
+/// scarcest thing on that board and the heartbeat was being run six times faster than
+/// it needed to be purely to carry this one field.
+pub async fn take_relay_command(conn: &Connection) -> AppResult<Option<String>> {
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await?;
+
+    let command: Option<String> = {
+        let mut rows = transaction
+            .query(
+                "select relay_command from device_telemetry where id = 1",
+                (),
+            )
+            .await?;
+
+        match rows.next().await? {
+            Some(row) => row.get(0)?,
+            None => None,
+        }
+    };
+
+    // Written unconditionally rather than only when something was pending. A
+    // conditional update would be a second read, and the row is already locked.
+    transaction
+        .execute(
+            "update device_telemetry set relay_command = null where id = 1",
+            (),
+        )
+        .await?;
+
+    transaction.commit().await?;
+
+    Ok(command)
+}
+
+/// Queues an operator's relay command for whichever request the board makes next.
 ///
 /// Overwrites anything still pending rather than queueing behind it. Someone who
 /// pressed open and then close means close: replaying the first would leave the relay

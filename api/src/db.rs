@@ -1,4 +1,4 @@
-use libsql::{Builder, Connection, Database};
+use libsql::{Builder, Connection, Database, Row};
 
 use crate::error::{AppError, AppResult};
 
@@ -41,6 +41,26 @@ impl Db {
             .connect()
             .map_err(|error| AppError::Upstream(format!("could not reach the database: {error}")))
     }
+}
+
+/// Takes the first row of a result set, then finishes the rest.
+///
+/// Over HTTP a result set is a statement still open on the stream. Abandoning one half
+/// read leaves the stream in a state the server refuses further requests on, and the
+/// next query fails with "stream not found: <id>" — which reads like the database went
+/// away rather than like the previous statement was never finished.
+///
+/// It only bites when another query follows on the same connection, so every
+/// `returning` that ends its request got away with it. Ingest did not: it inserts a
+/// reading and then evaluates alerts, and that second query is reached only by a
+/// reading that actually crosses a threshold. The fault was therefore invisible until
+/// one did, and would have taken out every alert the moment the meter reported a real
+/// overload.
+pub async fn first_row(rows: &mut libsql::Rows) -> AppResult<Option<Row>> {
+    let first = rows.next().await?;
+    while rows.next().await?.is_some() {}
+
+    Ok(first)
 }
 
 /// Applies the schema.

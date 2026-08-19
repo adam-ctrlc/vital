@@ -112,6 +112,18 @@ bool Monitor::sample() {
 
   temperature = probe.read();
 
+  // Said once per change rather than once per sample. Whether the meter is talking is
+  // the first question when the numbers look wrong, and `sensor_ok` in the line below
+  // answers it only if somebody is already reading every line.
+  const bool answering = !isnan(voltage);
+  if (answering != meterAnswering) {
+    meterAnswering = answering;
+    Serial.println(answering ? "PZEM answering"
+                             : "PZEM stopped answering: check its AC supply, the 5V "
+                               "and GND to the module, and that its TX goes to the "
+                               "board's RX");
+  }
+
   if (isnan(voltage) || isnan(current)) {
     apparentPower = NAN;
     return false;
@@ -202,25 +214,39 @@ void Monitor::updateStatus(unsigned long now) {
 }
 
 void Monitor::applyRelay() {
-  bool shouldClose = status != STATUS_OVERLOAD;
+  const bool shouldClose = status != STATUS_OVERLOAD;
+  const bool changed = relay.isClosed() != shouldClose;
 
-  // Normally written only on a change, so the pin is not hammered every cycle.
-  if (relay.isClosed() != shouldClose) {
-    relay.set(shouldClose);
+  // Driven every pass rather than only on the edge.
+  //
+  // Writing once asks the hardware to remember a level for as long as the board runs,
+  // and a protection relay is the wrong place to rely on that. A brownout on the
+  // module, a glitch while the radio starts, or a write that simply did not latch
+  // leaves the contacts disagreeing with the machine forever, because on this path
+  // nothing would ever write again.
+  //
+  // The re-assert below used to be the net for that, but it only fires when the meter
+  // is reporting current, so a silent PZEM quietly disabled it. Refreshing every
+  // sample costs one register write a second, depends on nothing else working, and is
+  // what the bench test was doing when it switched the same relay on the same pin.
+  relay.set(shouldClose);
+
+  if (changed) {
+    Serial.print("relay ");
+    Serial.print(shouldClose ? "CLOSED" : "OPEN");
+    Serial.print(", P");
+    Serial.print(relay.number());
+    Serial.println(shouldClose ? " driven LOW" : " driven HIGH");
     return;
   }
 
-  // Except when the meter disagrees with us. We believe the contacts are open and
-  // current is still flowing, so one of those is wrong, and the measurement is the
-  // one with evidence behind it. Driving the pin again costs nothing and recovers
-  // the case the cached state cannot see: a write that never landed, a module that
-  // did not latch, a line that glitched.
-  //
-  // The board is active low, so this is a HIGH. Re-asserting through Relay rather
-  // than writing the pin here is what keeps that detail in one place.
+  // The contacts are open and the meter still sees current, so one of the two is
+  // wrong and the measurement is the one with evidence behind it. The pin was already
+  // re-driven above, on this pass and every other, so there is nothing left to do
+  // about it here except say so: a contact that keeps conducting after the output has
+  // been held open all this time is welded, not glitching.
   if (!shouldClose && contactsStuck()) {
-    Serial.println("current flowing with the relay open, re-asserting the trip");
-    relay.set(false);
+    Serial.println("current flowing with the relay open, contacts may be welded");
   }
 }
 

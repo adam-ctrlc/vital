@@ -18,6 +18,13 @@ void Main::begin() {
   // Adopt the last thresholds seen so a reboot keeps the operator's values instead
   // of falling back to the compiled defaults until the first heartbeat lands.
   prefs.begin("vital", false);
+
+#if CLEAR_SAVED_STATE
+  prefs.clear();
+  Serial.println("CLEAR_SAVED_STATE is on: wiped the saved trip, lockout and settings.");
+  Serial.println("Set it back to 0 and reflash, or every boot discards them again.");
+#endif
+
   monitor.setThresholds(prefs.getFloat("loadVa", 900.0f), prefs.getFloat("tripVa", 980.0f),
                         prefs.getFloat("tempC", 40.0f));
 
@@ -44,6 +51,28 @@ void Main::begin() {
                              : "restored a trip from before the reboot, load stays open");
     monitor.restoreTrip(millis(), lockedOut);
   }
+
+  // Said out loud on every boot, not only when something was restored. A relay that
+  // will not close looks identical to a broken one from outside, and this is the line
+  // that separates them: it names the state the contacts are driven from, before any
+  // measurement has had a chance to change it.
+  Serial.print("boot: tripped=");
+  Serial.print(tripped ? "yes" : "no");
+  Serial.print(" lockedOut=");
+  Serial.print(lockedOut ? "yes" : "no");
+  Serial.print(" status=");
+  Serial.print(monitor.statusLabel());
+  Serial.print(" relay=");
+  Serial.print(monitor.relayClosed() ? "CLOSED" : "OPEN");
+  Serial.print(" alarm=");
+  Serial.print(monitor.loadThreshold(), 0);
+  Serial.print(" trip=");
+  Serial.print(monitor.tripThreshold(), 0);
+  Serial.print(" tripDelay=");
+  Serial.print(monitor.tripConfirmSeconds());
+  Serial.print("s recloseDelay=");
+  Serial.print(monitor.recloseDelaySeconds());
+  Serial.println("s");
 
   net.begin();
   net.connect();
@@ -85,7 +114,7 @@ void Main::loop() {
   // off the schedule. On the interval alone the backend heard about an overload up to
   // POST_INTERVAL_MS late, and every one of those seconds is a second before anyone
   // is told. There is no timer here at all: it goes out in the same pass that saw it.
-  if (monitor.takeAlarmEdge() && online) post();
+  if (monitor.takeAlarmEdge() && online) post(now);
 
   // The record of the run, unchanged and deliberately not reset by the line above, so
   // rows stay evenly spaced whether or not an alarm interrupted them.
@@ -96,17 +125,14 @@ void Main::loop() {
   // than in how quickly an overload is noticed, which no longer waits for it at all.
   if (now - lastPost >= POST_INTERVAL_MS) {
     lastPost = now;
-    if (online) post();
+    if (online) post(now);
   }
 
   // Served every pass and never waited on, so a caller cannot hold up the sampling
   // or the trip timer that share this loop.
   live.loop();
 
-  const unsigned long heartbeatEvery =
-      monitor.isLockedOut() ? LOCKED_HEARTBEAT_INTERVAL_MS : HEARTBEAT_INTERVAL_MS;
-
-  if (now - lastHeartbeat >= heartbeatEvery) {
+  if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeat = now;
     if (online) {
       BackendClient::HeartbeatResult ack = backend.postHeartbeat(monitor.isLockedOut());
@@ -118,23 +144,30 @@ void Main::loop() {
         applyRecloseDelay(ack);
         applyTripConfirm(ack);
 
-        // An operator has been to look and says what to do. The board cannot reach
-        // either conclusion itself: closing is the whole reason it locked out, and
-        // opening on request is the manual override that protection never grants.
-        switch (ack.relayCommand) {
-          case BackendClient::RELAY_CLOSE: monitor.closeByOperator(now); break;
-          case BackendClient::RELAY_OPEN: monitor.openByOperator(now); break;
-          case BackendClient::RELAY_NONE: break;
-        }
+        applyRelayCommand(ack.relayCommand, now);
       }
     }
   }
 }
 
-void Main::post() {
+void Main::post(unsigned long now) {
   Monitor::Snapshot s = monitor.snapshot();
-  backend.postReading(s.voltage, s.current, s.temperature, s.power, s.powerFactor,
-                      s.frequency, s.energy, monitor.relayClosed());
+  const BackendClient::ReadingResult result =
+      backend.postReading(s.voltage, s.current, s.temperature, s.power, s.powerFactor,
+                          s.frequency, s.energy, monitor.relayClosed());
+
+  if (result.ok) applyRelayCommand(result.relayCommand, now);
+}
+
+void Main::applyRelayCommand(BackendClient::RelayCommand command, unsigned long now) {
+  // An operator has been to look and says what to do. The board cannot reach either
+  // conclusion itself: closing is the whole reason it locked out, and opening on
+  // request is the manual override that protection never grants.
+  switch (command) {
+    case BackendClient::RELAY_CLOSE: monitor.closeByOperator(now); break;
+    case BackendClient::RELAY_OPEN: monitor.openByOperator(now); break;
+    case BackendClient::RELAY_NONE: break;
+  }
 }
 
 void Main::applyRecloseDelay(const BackendClient::HeartbeatResult &ack) {

@@ -79,9 +79,28 @@ pub async fn record(
 /// than an empty result, so it is reported instead of turning into a `None` the caller
 /// would have to invent a meaning for.
 async fn returned_row(rows: &mut libsql::Rows, what: &str) -> AppResult<Row> {
-    rows.next()
+    let row = crate::db::first_row(rows)
         .await?
-        .ok_or_else(|| AppError::Upstream(format!("{what} returned no row")))
+        .ok_or_else(|| AppError::Upstream(format!("{what} returned no row")))?;
+
+    // Drained before returning, even though `returning` on a single-row write can only
+    // produce the one row we just took.
+    //
+    // Over HTTP the result set is a statement still open on the stream, and abandoning
+    // it half read leaves the stream in a state the server will not accept another
+    // request on. The next query then fails with "stream not found: <id>", which reads
+    // like the database went away rather than like the previous statement was never
+    // finished.
+    //
+    // It went unnoticed because every other `returning` in this codebase is the last
+    // statement of its request, so nothing followed it to trip over. Ingest is the one
+    // place that keeps going: it inserts the reading, then evaluates alerts. Only a
+    // reading that actually crosses a threshold reaches that second query, so the fault
+    // was invisible until one did, and would have taken out every alert the moment the
+    // meter reported a real overload.
+    while rows.next().await?.is_some() {}
+
+    Ok(row)
 }
 
 /// No longer generic over an executor.

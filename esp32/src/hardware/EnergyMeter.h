@@ -6,13 +6,16 @@
 
 class EnergyMeter {
  public:
+  /// Every field defaults to NAN so an abandoned read reports absence rather than
+  /// whatever was on the stack. `read()` returns early when the meter does not
+  /// answer, and without these the caller would be handed six garbage floats.
   struct Reading {
-    float voltage;
-    float current;
-    float power;
-    float energy;
-    float frequency;
-    float powerFactor;
+    float voltage = NAN;
+    float current = NAN;
+    float power = NAN;
+    float energy = NAN;
+    float frequency = NAN;
+    float powerFactor = NAN;
   };
 
   EnergyMeter(HardwareSerial &serial, uint8_t rx, uint8_t tx);

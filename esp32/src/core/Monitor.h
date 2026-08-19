@@ -262,6 +262,10 @@ class Monitor {
   Relay &relay;
   Lcd &lcd;
 
+  /// Whether the meter answered the last exchange, so the change can be announced
+  /// once instead of every second. Starts false: nothing has answered yet.
+  bool meterAnswering = false;
+
   Status status = STATUS_NORMAL;
   bool alarmEdge = false;
   /// Attempts spent on the current run of trips, reset by a reclose that holds.
