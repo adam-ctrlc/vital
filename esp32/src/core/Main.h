@@ -33,6 +33,20 @@
 // at almost exactly the moment the board first tried to recover.
 #define RECONNECT_INTERVAL_MS 15000
 
+// How long to wait after the contacts move before writing the trip state to NVS.
+//
+// A flash write is an erase cycle: tens of milliseconds of raised current, and it
+// blocks. It used to happen in the same loop pass that switched the relay, microseconds
+// after the coil inrush, and an operator pressing off triggers two of them because the
+// trip and the lockout are stored separately. Three current spikes on one rail inside a
+// few milliseconds is what makes the module's LED dim and the contacts hesitate on a
+// board that switches cleanly under the bench sketch, which has no NVS at all.
+//
+// The cost is a window in which a reboot loses the flag. It is short, the contacts are
+// already in the safe position by then, and it is the smaller risk: the write itself was
+// helping cause the brownouts that the persistence exists to survive.
+#define PERSIST_SETTLE_MS 300
+
 // Wipes the saved trip, lockout and operator settings once at boot.
 //
 // A latched trip outlives a reflash, because it lives in NVS rather than in the
@@ -98,6 +112,12 @@ class Main {
   unsigned long lastPost = 0;
   unsigned long lastHeartbeat = 0;
   unsigned long lastReconnect = 0;
+  /// Set when the trip or lockout has changed and the flash write is still owed, with
+  /// the earliest moment it may happen. One write per pass, so the two never land
+  /// together either.
+  bool trippedDirty = false;
+  bool lockedDirty = false;
+  unsigned long persistAt = 0;
   bool tripped = false;
   bool lockedOut = false;
   /// The delay last written to NVS, so an unchanged heartbeat does not rewrite it.

@@ -87,11 +87,13 @@ void Main::loop() {
 
   monitor.loop(now);
 
-  // Written only on the edge, so the flash sees one write per trip and one per
-  // reclose rather than one per sample.
+  // Noticed on the edge, written later. The flash sees one write per trip and one per
+  // reclose rather than one per sample, and none of them in the pass that just moved
+  // the contacts.
   if (monitor.isTripped() != tripped) {
     tripped = monitor.isTripped();
-    prefs.putBool("tripped", tripped);
+    trippedDirty = true;
+    persistAt = now + PERSIST_SETTLE_MS;
   }
 
   // Kept separately from the trip. A trip is a state the board can leave on its own;
@@ -99,8 +101,22 @@ void Main::loop() {
   // the very fault it was holding open.
   if (monitor.isLockedOut() != lockedOut) {
     lockedOut = monitor.isLockedOut();
-    prefs.putBool("locked", lockedOut);
+    lockedDirty = true;
+    persistAt = now + PERSIST_SETTLE_MS;
     if (lockedOut) Serial.println("out of reclose attempts, load stays open until reset");
+  }
+
+  // One erase per pass, each pushing the next one out again, so an operator's off press
+  // does not fire the coil and both flash writes inside the same few milliseconds.
+  if ((trippedDirty || lockedDirty) && (long)(now - persistAt) >= 0) {
+    if (trippedDirty) {
+      trippedDirty = false;
+      prefs.putBool("tripped", tripped);
+    } else {
+      lockedDirty = false;
+      prefs.putBool("locked", lockedOut);
+    }
+    persistAt = now + PERSIST_SETTLE_MS;
   }
 
   if (WiFi.status() != WL_CONNECTED && now - lastReconnect >= RECONNECT_INTERVAL_MS) {
