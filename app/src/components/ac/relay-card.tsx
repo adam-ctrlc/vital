@@ -52,12 +52,14 @@ const AWAITING_POLL_MS = 1000;
  * because the protection undid one moments ago. Nothing would ever clear the wait in
  * those cases, and a button disabled forever is worse than one that admits defeat.
  *
- * Sized against the real path rather than the hoped-for one. The board posts every
- * five seconds and now reports a commanded change immediately, so the answer normally
- * arrives in about five seconds plus two round trips. A post that gets lost costs
- * another five. Thirty leaves room for two of those without ever calling a working
- * relay broken, which is the failure that matters: giving up early tells an operator
- * the board is unreachable while it is quietly doing what they asked.
+ * Sized against the real path rather than the hoped-for one, and that path is longer
+ * than it looks. The command reaches the board on the response to a post, and that
+ * post was sent before the contacts moved, so it still describes the old position. The
+ * new one only arrives on the following post: up to ten seconds, plus two round trips
+ * to Tokyo, and another five if a post is lost.
+ *
+ * Thirty absorbs that. Giving up early is the failure that matters, because it tells
+ * an operator the board is unreachable while it is quietly doing what they asked.
  */
 const AWAITING_TIMEOUT_MS = 30000;
 

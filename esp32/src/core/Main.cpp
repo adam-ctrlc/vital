@@ -176,10 +176,6 @@ void Main::post(unsigned long now) {
 }
 
 void Main::applyRelayCommand(BackendClient::RelayCommand command, unsigned long now) {
-  if (command == BackendClient::RELAY_NONE) return;
-
-  const bool before = monitor.relayClosed();
-
   // An operator has been to look and says what to do. The board cannot reach either
   // conclusion itself: closing is the whole reason it locked out, and opening on
   // request is the manual override that protection never grants.
@@ -188,20 +184,6 @@ void Main::applyRelayCommand(BackendClient::RelayCommand command, unsigned long 
     case BackendClient::RELAY_OPEN: monitor.openByOperator(now); break;
     case BackendClient::RELAY_NONE: break;
   }
-
-  if (monitor.relayClosed() == before) return;
-
-  // Report the new position at once instead of waiting out the interval.
-  //
-  // The command arrived on the response to a post that was sent before the contacts
-  // moved, so that post still described the old position. Left alone, the app would
-  // not learn the relay had switched until the following one, which doubles the wait
-  // it shows an operator: up to ten seconds for a relay that moved in under one.
-  //
-  // Backdating rather than posting from here keeps the request on the one path in
-  // loop() that owns it, and it is safe to underflow: the comparison there is
-  // subtraction on unsigned values, which wraps to the right answer.
-  lastPost = now - POST_INTERVAL_MS;
 }
 
 void Main::applyRecloseDelay(const BackendClient::HeartbeatResult &ack) {
