@@ -116,10 +116,28 @@ DS18B20 (temperature):
   Note: hd44780 auto-detects the backpack I2C address and register mapping and
         drives whichever answers, so no address jumper guessing is needed.
 
-Relay module (load switching, active low):
-  IN  -> P18
+Relay module (load switching, active low, driven through an NPN):
+  P18 -> 4.7k -> NPN base      (2N2222, BC547 or similar)
+  NPN collector -> module IN
+  NPN emitter   -> GND
   VCC -> 5V
-  GND -> GND
+  GND -> GND, shared with the ESP32
+  Why: a 3.3V pin cannot switch this module off. IN is pulled up to 5V inside the
+       module, so driving it to 3.3V leaves 1.7V across the opto LED. It keeps
+       conducting, the input LED glows dim rather than going dark, and near the
+       threshold it chatters. Pulling low always worked; it was the off state that
+       could not be reached.
+  The transistor never sources 5V. It gets out of the way and lets the module's own
+       pull-up take IN to the full rail, which is the one thing the pin could not do.
+  Base resistor: 4.7k gives about 0.55 mA of base current, a forced gain near 9 for a
+       5 mA input. Saturated with room to spare, and five times gentler on the pin
+       than the 1k usually quoted. Optional 10k from base to emitter if you want the
+       base held down while the pin floats.
+  Polarity: RELAY_VIA_TRANSISTOR in Pins.h must be 1 for this wiring. It inverts
+       RELAY_ON to HIGH. Set to 0 only if IN is wired straight to P18. Getting it
+       wrong closes the relay exactly when the firmware believes it is open.
+  Boot: before pinMode() runs the pin is high impedance, so no base current, so the
+       transistor is off and the load is de-energized from the moment power arrives.
   Load: live line through COM and NO, so an unpowered or still booting board
         leaves the load de-energized.
   Note: active low. Pins.h sets RELAY_ON to LOW and RELAY_OFF to HIGH, which is
