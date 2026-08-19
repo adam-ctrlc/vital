@@ -35,6 +35,25 @@ import { useAppearance } from '@/lib/appearance';
 
 const POLL_MS = 5000;
 
+/**
+ * How often to look while a command is in flight.
+ *
+ * The board acts on its next post, so the answer arrives within a posting interval.
+ * Waiting out the ordinary poll would add up to five seconds of watching a disabled
+ * button for a relay that had already moved.
+ */
+const AWAITING_POLL_MS = 1000;
+
+/**
+ * How long to keep waiting before letting go.
+ *
+ * The board might never act: it could be offline, or the close could be refused
+ * because the protection undid one moments ago. Nothing would ever clear the wait in
+ * those cases, and a button disabled forever is worse than one that admits defeat.
+ * Comfortably longer than a posting interval plus a round trip to Tokyo.
+ */
+const AWAITING_TIMEOUT_MS = 20000;
+
 const RELAY_OPTIONS: { label: string; value: 'closed' | 'open' }[] = [
   { label: 'On', value: 'closed' },
   { label: 'Off', value: 'open' },
@@ -62,6 +81,14 @@ export function RelayCard() {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState<string | null>(null);
+  /**
+   * The position asked for and not yet seen, with the moment to give up.
+   *
+   * `sending` only covers the request itself, which returns as soon as the backend has
+   * written the command down. The board has not acted at that point, so re-enabling
+   * there invites a second press against a relay that is still moving.
+   */
+  const [awaiting, setAwaiting] = useState<{ closed: boolean; until: number } | null>(null);
   const [note, setNote] = useState<string | null>(null);
   /** The saved settings, kept whole because the endpoint takes every field together. */
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -94,10 +121,10 @@ export function RelayCard() {
 
   useEffect(() => {
     void load();
-    const id = setInterval(() => void load(), POLL_MS);
+    const id = setInterval(() => void load(), awaiting ? AWAITING_POLL_MS : POLL_MS);
 
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, awaiting]);
 
   async function send(command: 'open' | 'close') {
     setSending(command);
@@ -112,9 +139,12 @@ export function RelayCard() {
           ? 'Sent. The board closes the relay on its next check, within a few seconds.'
           : 'Sent. The board opens the relay on its next check, within a few seconds.'
       );
+      setAwaiting({ closed: command === 'close', until: Date.now() + AWAITING_TIMEOUT_MS });
       await load();
     } catch (caught) {
       setNote((caught as Error).message);
+      // Nothing was queued, so there is nothing to wait for.
+      setAwaiting(null);
     } finally {
       setSending(null);
     }
@@ -150,6 +180,39 @@ export function RelayCard() {
       setDragTrip(null);
     }
   }
+
+  // Released when the board reports the position that was asked for, or when waiting
+  // any longer stops being honest.
+  //
+  // Watching the reported position rather than the request is the whole point: the
+  // request only proves the backend wrote the command down. A relay that has actually
+  // moved is the only thing worth re-enabling the buttons for.
+  useEffect(() => {
+    if (!awaiting) return;
+
+    const reported = status?.relayClosed;
+    if (reported === awaiting.closed) {
+      setAwaiting(null);
+      setNote(null);
+      return;
+    }
+
+    // On a timer of its own rather than on the next poll. A poll that throws leaves the
+    // status untouched, this effect never re-runs, and the deadline would pass unnoticed
+    // with the buttons disabled for good. Losing the network is exactly when that is
+    // most likely and least forgivable.
+    const timer = setTimeout(
+      () => {
+        setAwaiting(null);
+        setNote(
+          'The board has not reported the change. It may be offline, or the close was refused because the protection undid one moments ago.'
+        );
+      },
+      Math.max(0, awaiting.until - Date.now())
+    );
+
+    return () => clearTimeout(timer);
+  }, [awaiting, status]);
 
   const delay = settings?.recloseDelaySeconds ?? DEFAULT_SECONDS;
   const trip = settings?.tripConfirmSeconds ?? TRIP_DEFAULT_SECONDS;
@@ -258,7 +321,7 @@ export function RelayCard() {
               // control.
               options={RELAY_OPTIONS.map((option) => ({
                 ...option,
-                disabled: !canControl || sending !== null,
+                disabled: !canControl || sending !== null || awaiting !== null,
               }))}
               value={open ? 'open' : 'closed'}
               onChange={(next) => void send(next === 'closed' ? 'close' : 'open')}
