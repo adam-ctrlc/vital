@@ -51,9 +51,15 @@ const AWAITING_POLL_MS = 1000;
  * The board might never act: it could be offline, or the close could be refused
  * because the protection undid one moments ago. Nothing would ever clear the wait in
  * those cases, and a button disabled forever is worse than one that admits defeat.
- * Comfortably longer than a posting interval plus a round trip to Tokyo.
+ *
+ * Sized against the real path rather than the hoped-for one. The board posts every
+ * five seconds and now reports a commanded change immediately, so the answer normally
+ * arrives in about five seconds plus two round trips. A post that gets lost costs
+ * another five. Thirty leaves room for two of those without ever calling a working
+ * relay broken, which is the failure that matters: giving up early tells an operator
+ * the board is unreachable while it is quietly doing what they asked.
  */
-const AWAITING_TIMEOUT_MS = 20000;
+const AWAITING_TIMEOUT_MS = 30000;
 
 const RELAY_OPTIONS: { label: string; value: 'closed' | 'open' }[] = [
   { label: 'On', value: 'closed' },
