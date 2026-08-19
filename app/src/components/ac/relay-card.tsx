@@ -13,6 +13,7 @@ import { Text } from '@/components/ui/text';
 import { useAuth } from '@/features/auth/context';
 import * as deviceApi from '@/features/device/api';
 import type { DeviceStatus } from '@/features/device/types';
+import { relayWaitOutcome } from '@/features/device/relay-wait';
 import * as readingsApi from '@/features/readings/api';
 import * as settingsApi from '@/features/settings/api';
 import {
@@ -190,8 +191,7 @@ export function RelayCard() {
   useEffect(() => {
     if (!awaiting) return;
 
-    const reported = status?.relayClosed;
-    if (reported === awaiting.closed) {
+    if (relayWaitOutcome(awaiting, status?.relayClosed, Date.now()) === 'moved') {
       setAwaiting(null);
       setNote(null);
       return;
