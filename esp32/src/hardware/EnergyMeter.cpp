@@ -10,18 +10,13 @@ void EnergyMeter::begin() {
 EnergyMeter::Reading EnergyMeter::read() {
   Reading r;
 
-  // Voltage is read first and decides whether the rest is worth reading at all.
+  // Voltage first, and it decides whether the rest is worth reading.
   //
-  // The library fetches all ten registers in one exchange and caches them, but it
-  // marks that cache fresh *before* the exchange rather than after it succeeds. So a
-  // meter that does not answer makes only the first getter return NAN; the other five
-  // fall inside the cache window, are told the data is current, and hand back
-  // `_currentValues`, which is all zeros until some read has actually worked.
-  //
-  // That is how a meter nobody was talking to reported "current 0.000, power 0.0"
-  // beside a null voltage: five fabricated zeros that read exactly like a healthy
-  // sensor watching an idle line. Trusting them is worse than having no data, because
-  // an idle line is indistinguishable from a dead one until the load is switched on.
+  // The library fetches all ten registers in one exchange and marks its cache fresh
+  // before that exchange rather than after it succeeds. So a silent meter makes only the
+  // first getter return NAN; the other five fall inside the cache window and hand back
+  // zeros. That is how a meter nobody was talking to reported "current 0.000, power 0.0"
+  // beside a null voltage, which reads exactly like a healthy sensor on an idle line.
   r.voltage = pzem.voltage();
   if (isnan(r.voltage)) return r;
 

@@ -1,18 +1,18 @@
-// PZEM bench test. Standalone: no relay, no LCD, no WiFi, no state machine. If the
-// meter does not answer here, nothing in the firmware can be the reason.
+// PZEM bench test. Standalone: no relay, no LCD, no WiFi, no state machine. If the meter
+// does not answer here, nothing in the firmware can be the reason.
 //
 // Wiring, the same pins the firmware uses:
 //   PZEM TX -> P16        PZEM 5V  -> 5V
 //   PZEM RX -> P17        PZEM GND -> GND
 //
-// The PZEM-004T v3.0 measures the AC line AND draws its measuring side from it. With
-// no live AC on the voltage terminals it will not answer Modbus at all, however good
-// the serial wiring is. That is the first thing this test tells you apart.
+// The PZEM-004T v3.0 draws its measuring side from the line it measures, so with no live
+// AC on the voltage terminals it will not answer Modbus at all, however good the serial
+// wiring is. That is the first thing this test separates out.
 //
 // It also calls voltage() twice on purpose. The library marks its 200 ms cache fresh
-// before the exchange rather than after it succeeds, so one failed transaction makes
-// the first getter return NAN while the rest quietly serve a cache of zeros. Reading
-// the same value twice separates "the meter is silent" from "one exchange was lost".
+// before the exchange rather than after it succeeds, so one lost transaction makes the
+// first getter return NAN while the rest serve a cache of zeros. Reading twice tells
+// "the meter is silent" from "one exchange was lost".
 
 #include <Arduino.h>
 #include <PZEM004Tv30.h>
@@ -56,9 +56,8 @@ void loop() {
   lastRead = millis();
   attempts++;
 
-  // Two shots at the exchange that matters. The second one starts with a clean
-  // buffer, so a single lost frame shows up as "recovered on retry" rather than as
-  // a dead meter.
+  // Two shots at the exchange that matters. The second starts with a clean buffer, so a
+  // single lost frame reads as "recovered on retry" rather than as a dead meter.
   float voltage = pzem.voltage();
   const bool retried = isnan(voltage);
   if (retried) voltage = pzem.voltage();

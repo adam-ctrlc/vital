@@ -12,15 +12,14 @@ BackendClient::HeartbeatResult BackendClient::postHeartbeat(bool lockedOut) {
   JsonDocument doc;
   doc["deviceId"] = DEVICE_ID;
   doc["firmware"] = FIRMWARE_VERSION;
-  // The serializer escapes these. Concatenated by hand they were a latent break:
-  // an SSID holding a quote or a backslash produced malformed JSON and a 400 that
-  // would have read as the board being broken.
+  // The serializer escapes these. Built by hand, an SSID with a quote or a backslash
+  // in it produced malformed JSON and a 400 that read as the board being broken.
   doc["ssid"] = WiFi.SSID();
   doc["ipAddress"] = WiFi.localIP().toString();
   doc["signalDbm"] = (int)WiFi.RSSI();
   doc["uptimeSeconds"] = (unsigned long)(millis() / 1000);
-  // Reported so an operator can see the load is off on purpose rather than the board
-  // having died, which look identical from the outside.
+  // So an operator can tell "off on purpose" from "the board died", which otherwise
+  // look identical.
   doc["relayLockedOut"] = lockedOut;
 
   String body;
@@ -46,10 +45,9 @@ BackendClient::HeartbeatResult BackendClient::postHeartbeat(bool lockedOut) {
       result.tripThresholdVa = ack["tripThresholdVa"] | NAN;
       result.tempThresholdC = ack["tempThresholdC"] | NAN;
 
-      // Copied into the enum here rather than carried out as a pointer: the string
-      // belongs to the JsonDocument, which dies at the end of this scope. Anything
-      // other than the two known words is left as NONE, so a field the backend one
-      // day adds a third value to cannot be read as a command to move the contacts.
+      // Copied into the enum rather than carried out as a pointer: the string belongs
+      // to the JsonDocument, which dies at the end of this scope. Anything but the two
+      // known words stays NONE, so a value added later cannot move the contacts.
       const char *command = ack["relayCommand"] | "";
       if (strcmp(command, "open") == 0) {
         result.relayCommand = RELAY_OPEN;
@@ -88,9 +86,8 @@ BackendClient::ReadingResult BackendClient::postReading(float voltage, float cur
     return result;
   }
 
-  // Added after the emptiness check on purpose. A contact position is not a
-  // measurement, so a payload carrying only this is still nothing to record and the
-  // backend would rightly refuse it.
+  // After the emptiness check on purpose: a contact position is not a measurement, so
+  // a payload carrying only this is still nothing to record.
   doc["relayClosed"] = relayClosed;
 
   String body;
@@ -98,8 +95,8 @@ BackendClient::ReadingResult BackendClient::postReading(float voltage, float cur
 
   HTTPClient http;
   http.begin(shared(), String(BACKEND_URL) + "/api/v1/readings");
-  // Asks the server to hold the socket open, which is what lets the next post skip
-  // the handshake. Without it the connection is closed under us and reuse is moot.
+  // Asks the server to hold the socket open, which is what lets the next post skip the
+  // handshake.
   http.setReuse(true);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-device-key", DEVICE_KEY);
@@ -111,9 +108,8 @@ BackendClient::ReadingResult BackendClient::postReading(float voltage, float cur
   if (code >= 200 && code < 300) {
     result.ok = true;
 
-    // The response used to be logged and thrown away. It now carries whatever an
-    // operator asked the relay to do, handed over exactly once, so a command reaches
-    // the board within one posting interval without a heartbeat of its own.
+    // The response carries whatever an operator asked the relay to do, so a command
+    // reaches the board within one posting interval without a heartbeat of its own.
     JsonDocument ack;
     const String payload = http.getString();
     Serial.println(payload);

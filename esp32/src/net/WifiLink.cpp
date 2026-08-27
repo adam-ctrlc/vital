@@ -9,13 +9,12 @@ void WifiLink::begin() {
   WiFi.setAutoReconnect(true);
 
   // The credentials are compiled in, so there is nothing to remember between boots.
-  // Left on, the driver rewrites them to flash on every begin(), which is a flash
-  // erase cycle spent on a value that never changes.
+  // Left on, the driver spends a flash erase cycle on them at every begin().
   WiFi.persistent(false);
 
-  // Modem sleep between beacons. It is the default for a station, but it is stated
-  // here because it is the difference between holding the receiver up continuously
-  // and waking for the beacon, and this board has no current to spare.
+  // Modem sleep between beacons. Already the station default, said out loud because it
+  // is the difference between holding the receiver up and waking for the beacon, and
+  // this board has no current to spare.
   WiFi.setSleep(true);
 
   WiFi.setTxPower(WIFI_TX_POWER);
@@ -24,16 +23,12 @@ void WifiLink::begin() {
 void WifiLink::connect() {
   if (WiFi.status() == WL_CONNECTED) return;
 
-  // Stops whatever attempt the supplicant already has in flight.
+  // Stops whatever attempt the supplicant already has in flight. setAutoReconnect means
+  // one is usually running, and begin() on top of that is refused with "sta is
+  // connecting, cannot set config", leaving the radio in the scan-and-associate state,
+  // its highest draw, while the loop below waits out a timeout for nothing.
   //
-  // setAutoReconnect means it is retrying on its own, so by the time this is called
-  // there is usually an association already running. Calling begin() on top of that is
-  // refused outright with "sta is connecting, cannot set config", and the cost is not
-  // just a wasted call: the radio stays in the scan-and-associate state, which draws
-  // the most current this board ever asks for, while the loop below waits out a
-  // timeout for an attempt that was never started.
-  //
-  // The mode is not set again here either. It was set in begin() and re-setting it
+  // The mode is not set again here either: it was set in begin(), and re-setting it
   // restarts the radio.
   WiFi.disconnect();
 

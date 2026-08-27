@@ -33,11 +33,9 @@ void Lcd::show(const String &line1, const String &line2, const String &line3,
     String text = *lines[row];
     if (text.length() > cols) text = text.substring(0, cols);
 
-    // Reserved up front because the pad below appends one character at a time, and
-    // an Arduino String reallocates as it grows. On a 20x4 that is 80 characters a
-    // second at the sampling rate, and small repeated reallocations interleaved with
-    // the tens of KB a TLS handshake takes is what fragments the heap on a board
-    // with no PSRAM.
+    // Reserved up front because the pad below appends a character at a time and an
+    // Arduino String reallocates as it grows. That is 80 characters a second on a 20x4,
+    // and those small reallocations between TLS handshakes are what fragments the heap.
     text.reserve(cols);
     while (text.length() < cols) text += ' ';
 

@@ -14,25 +14,18 @@
 
 // How the module's IN pin is driven, which decides the polarity below.
 //
-//   0  the ESP32 drives IN directly. The module is active low, so closing the
-//      contacts drives the pin LOW.
-//
+//   0  the ESP32 drives IN directly. The module is active low, so closing drives LOW.
 //   1  an NPN sits between them: GPIO through 4.7k to the base, collector to IN,
-//      emitter to a ground shared with the module. The transistor inverts, so
-//      closing now drives the pin HIGH.
+//      emitter to a ground shared with the module. It inverts, so closing drives HIGH.
 //
-// The transistor is there because a 3.3V pin cannot switch this module off. IN is
-// pulled up to 5V inside the module, so driving it to 3.3V leaves 1.7V across the
-// opto LED: it keeps conducting, the input LED glows dim instead of going dark, and
-// near the threshold it chatters. The transistor never sources 5V, it just gets out
-// of the way and lets the module's own pull-up reach the full rail.
+// The transistor is there because a 3.3V pin cannot switch this module off: IN is pulled
+// up to 5V inside the module, so 3.3V leaves 1.7V across the opto LED, which keeps
+// conducting and chatters near the threshold. The transistor just gets out of the way
+// and lets the module's own pull-up reach the full rail. It also helps at boot, where
+// the pin is high impedance until pinMode() runs, so the load starts de-energized.
 //
-// It also improves the boot state. Before pinMode() runs the pin is high impedance,
-// which means no base current, which means the transistor is off and the load is
-// de-energized from the instant power arrives.
-//
-// Setting this to match the wiring is not cosmetic. Get it wrong and the relay is
-// closed exactly when the firmware believes it is open.
+// Match this to the wiring. Get it wrong and the relay is closed exactly when the
+// firmware believes it is open.
 #define RELAY_VIA_TRANSISTOR 1
 
 #if RELAY_VIA_TRANSISTOR

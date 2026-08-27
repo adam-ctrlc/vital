@@ -1,13 +1,12 @@
 #include "LiveServer.h"
 
-// Reached this header only by accident before, through a chain the split broke.
 #include <WiFi.h>
 
 void LiveServer::begin() {
   server.on("/live", HTTP_GET, [this]() { sendLive(); });
 
-  // A browser hitting the board from a laptop on the same network sends this before
-  // the request it actually wants, and a missing answer reads as the board being down.
+  // A browser sends the preflight before the request it actually wants, and a missing
+  // answer reads as the board being down.
   server.onNotFound([this]() {
     if (server.method() == HTTP_OPTIONS) {
       cors();
@@ -29,7 +28,7 @@ void LiveServer::begin() {
 
 void LiveServer::cors() {
   // The app is not a browser and does not need this, but a laptop checking the board
-  // during setup is, and being unable to look is a bad way to debug a demo.
+  // during setup is.
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Headers", "content-type");
 }

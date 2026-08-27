@@ -21,7 +21,7 @@ void Monitor::restoreTrip(unsigned long now, bool wasLockedOut) {
   status = STATUS_OVERLOAD;
   trippedAt = now;
   // A lockout that did not survive the reboot would auto-close into the fault it was
-  // holding open, which is the one outcome the lockout exists to prevent.
+  // holding open.
   lockedOut = wasLockedOut;
   attempts = wasLockedOut ? MAX_RECLOSE_ATTEMPTS : 0;
   applyRelay();
@@ -35,14 +35,12 @@ bool Monitor::takeAlarmEdge() {
 }
 
 void Monitor::closeByOperator(unsigned long now) {
-  // Judged on the contacts rather than the lockout, so the button also works during
-  // the wait after an ordinary trip. The old guard returned early there, leaving it
-  // dead for the whole reclose delay.
+  // Judged on the contacts rather than the lockout, so the button also works during the
+  // wait after an ordinary trip.
   if (status != STATUS_OVERLOAD) return;
 
-  // Refused, not queued. An operator whose close was undone a moment ago is asking
-  // again before the board has finished deciding, and honouring that turns a
-  // protection scheme into a switch that argues.
+  // Refused, not queued: this is a repeat press arriving before the board has finished
+  // deciding on the last one.
   if (manualBlockedUntil != 0 && (long)(now - manualBlockedUntil) < 0) {
     Serial.println("relay close refused, still within the retry wait");
     return;
@@ -113,8 +111,7 @@ bool Monitor::sample() {
   temperature = probe.read();
 
   // Said once per change rather than once per sample. Whether the meter is talking is
-  // the first question when the numbers look wrong, and `sensor_ok` in the line below
-  // answers it only if somebody is already reading every line.
+  // the first question when the numbers look wrong.
   const bool answering = !isnan(voltage);
   if (answering != meterAnswering) {
     meterAnswering = answering;
@@ -157,8 +154,8 @@ void Monitor::updateStatus(unsigned long now) {
         status = STATUS_WARNING;
         abnormalSince = now;
         overTripSince = overTrip() ? now : 0;
-        // The crossing itself, not the state. Waiting for the next scheduled post
-        // would sit on this for up to the post interval before anyone was told.
+        // The crossing itself, not the state, so the post goes out now instead of
+        // waiting for the next scheduled one.
         alarmEdge = true;
       }
       break;
@@ -170,9 +167,8 @@ void Monitor::updateStatus(unsigned long now) {
         overTripSince = 0;
         break;
       }
-      // The confirm timer runs only while the load is actually above the trip level
-      // and restarts the moment it falls back, so separate brief excursions cannot
-      // accumulate into a trip between them.
+      // The confirm timer restarts the moment the load falls back, so separate brief
+      // excursions cannot accumulate into a trip.
       if (!overTrip()) {
         overTripSince = 0;
         break;
@@ -183,8 +179,8 @@ void Monitor::updateStatus(unsigned long now) {
         trippedAt = now;
 
         // Overriding an operator who closed it moments ago, so make them wait before
-        // asking again. Protection outranks the request every time; the wait only
-        // stops the two fighting several times a second.
+        // asking again. Protection outranks the request; the wait just stops the two
+        // fighting several times a second.
         if (manualClosedAt != 0 && now - manualClosedAt <= recloseDelayMs) {
           Serial.println("overload after a manual close, opening again");
           manualBlockedUntil = now + MANUAL_RETRY_MS;
@@ -217,18 +213,10 @@ void Monitor::applyRelay() {
   const bool shouldClose = status != STATUS_OVERLOAD;
   const bool changed = relay.isClosed() != shouldClose;
 
-  // Driven every pass rather than only on the edge.
-  //
-  // Writing once asks the hardware to remember a level for as long as the board runs,
-  // and a protection relay is the wrong place to rely on that. A brownout on the
-  // module, a glitch while the radio starts, or a write that simply did not latch
-  // leaves the contacts disagreeing with the machine forever, because on this path
-  // nothing would ever write again.
-  //
-  // The re-assert below used to be the net for that, but it only fires when the meter
-  // is reporting current, so a silent PZEM quietly disabled it. Refreshing every
-  // sample costs one register write a second, depends on nothing else working, and is
-  // what the bench test was doing when it switched the same relay on the same pin.
+  // Driven every pass rather than only on the edge. Writing once asks the hardware to
+  // hold a level for as long as the board runs, and a brownout or a write that did not
+  // latch would leave the contacts disagreeing with the machine forever. One register
+  // write a second, depending on nothing else working.
   relay.set(shouldClose);
 
   if (changed) {
@@ -240,11 +228,9 @@ void Monitor::applyRelay() {
     return;
   }
 
-  // The contacts are open and the meter still sees current, so one of the two is
-  // wrong and the measurement is the one with evidence behind it. The pin was already
-  // re-driven above, on this pass and every other, so there is nothing left to do
-  // about it here except say so: a contact that keeps conducting after the output has
-  // been held open all this time is welded, not glitching.
+  // Open contacts, current still flowing. The pin was re-driven above on this pass and
+  // every other, so a contact still conducting is welded rather than glitching, and
+  // saying so is all that is left.
   if (!shouldClose && contactsStuck()) {
     Serial.println("current flowing with the relay open, contacts may be welded");
   }
@@ -280,18 +266,10 @@ void Monitor::publish(bool sensorsOk) {
   put(doc, "energy_kwh", energy, 3);
   put(doc, "temperature_c", temperature, 1);
 
-  // Heap health, for the question this firmware could not otherwise answer: does it
-  // last a month on a transformer, or only an afternoon on a bench.
-  //
-  // Read them together, because the two failure modes look different. `free` sliding
-  // downward on its own is a leak. `free` holding steady while `largest` sinks is
-  // fragmentation, and that is the likelier one here: every backend call builds and
-  // tears down a TLS context of tens of KB, which on a board without PSRAM comes out
-  // of the same pool as everything else. Once `largest` falls below what mbedTLS
-  // needs, posts start failing while `free` still looks healthy.
-  //
-  // `min_free` is the low water mark since boot, so a spike that nearly exhausted the
-  // heap is still visible afterwards rather than vanishing once it recovered.
+  // Heap health: does this last a month on a transformer or an afternoon on a bench.
+  // Read the three together. `free` sliding down on its own is a leak; `free` steady
+  // while `largest` sinks is fragmentation, which is likelier here because every TLS
+  // context comes out of the same pool. `min_free` is the low water mark since boot.
   doc["heap_free"] = ESP.getFreeHeap();
   doc["heap_largest"] = ESP.getMaxAllocHeap();
   doc["heap_min_free"] = ESP.getMinFreeHeap();
@@ -301,15 +279,10 @@ void Monitor::publish(bool sensorsOk) {
 }
 
 void Monitor::showLcd() {
-  // Four rows of twenty, read top to bottom as headline then detail: what the board
-  // thinks, what it measured, and how close each limit is. Both thresholds are on
-  // screen beside the value they judge, so a change made in the app is visible on
-  // the board without opening the app again.
-  //
-  // Every number goes through Lcd::formatFloat, which renders a missing measurement
-  // as "--" rather than nan, so an unplugged sensor reads as absent instead of
-  // broken. Widths are chosen to leave slack at twenty columns: the longest status
-  // word is OVERLOAD, and show() truncates rather than wraps if anything overruns.
+  // Four rows of twenty: what the board thinks, what it measured, how close each limit
+  // is. Each threshold sits beside the value it judges, so a change made in the app is
+  // visible at the panel. formatFloat renders a missing measurement as "--" rather than
+  // nan, and show() truncates rather than wraps if a row overruns.
   String header = "VITAL";
   String status = statusName();
   while (header.length() + status.length() < lcd.width()) header += ' ';
@@ -318,54 +291,46 @@ void Monitor::showLcd() {
   String measured =
       "V:" + Lcd::formatFloat(voltage, 1) + "  A:" + Lcd::formatFloat(current, 3);
 
-  // Measured against the trip, not the alarm: this row answers "how close is the
-  // load to being cut", and the alarm level announces itself as WARNING in the
-  // header when it is crossed.
+  // Against the trip, not the alarm: this row answers "how close is the load to being
+  // cut". The alarm level announces itself as WARNING in the header.
   String load = "VA:" + Lcd::formatFloat(apparentPower, 0) + "/" + String((int)tripLimit);
   if (!isnan(apparentPower) && tripLimit > 0.0f) {
     load += "  " + String((int)(apparentPower / tripLimit * 100.0f)) + "%";
   }
 
-  // Relay state earns its place now that the contacts actually move. Whether the
-  // load is energized is the one thing somebody standing at the box needs to read
-  // off the panel without interpreting anything.
+  // Whether the load is energized is the one thing somebody at the box has to be able
+  // to read without interpreting anything.
   String thermal = "T:" + Lcd::formatFloat(temperature, 1) + "/" + String((int)tempLimit) +
                    "C  RLY:" + (relay.isClosed() ? "ON" : "OFF");
 
-  // The last row gives up the temperature whenever the relay is doing something,
-  // because at that moment what the relay is about to do outranks a reading nobody
-  // is going to act on. It comes back the moment the relay is idle again.
+  // The last row gives up the temperature whenever the relay is doing something, and
+  // gets it back the moment the relay is idle again.
   const String relayLine = relayStatusLine();
 
   lcd.show(header, measured, load, relayLine.length() > 0 ? relayLine : thermal);
 }
 
 String Monitor::relayStatusLine() const {
-  // "ADMIN" stays whole and the rest gives up the letters: the one word that tells
-  // somebody this needs a person is the wrong one to make them decode. Exactly 20.
+  // "ADMIN" stays whole and the rest gives up its letters: the word that says a person
+  // is needed is the wrong one to make them decode. Exactly 20 columns.
   if (lockedOut) return "RLY LOCK-NEEDS ADMIN";
 
   if (status == STATUS_OVERLOAD) {
-    // Counts down rather than showing the deadline, because a millis() timestamp on
-    // a panel is not information. Clamped at zero so the tail of the wait, and a
-    // reclose held off because the load has not cleared yet, both read as "0s"
-    // instead of wrapping to an enormous number through unsigned subtraction.
+    // Counts down rather than showing a deadline. Clamped at zero so the tail of the
+    // wait reads "0s" instead of wrapping through unsigned subtraction.
     const unsigned long waited = millis() - trippedAt;
     const unsigned long left = waited >= recloseDelayMs ? 0 : (recloseDelayMs - waited) / 1000UL;
 
-    // The attempt about to be made rather than the count already spent, so the row
-    // reads as "3/3, this is the last one" instead of showing a 0 on the first wait.
-    // Clamped because the pass that finds the load still high at the final attempt
-    // leaves the count at the maximum without incrementing it again.
+    // The attempt about to be made, not the count already spent, so it reads "3/3, last
+    // one" instead of showing a 0 on the first wait.
     const uint8_t next = attempts < MAX_RECLOSE_ATTEMPTS ? attempts + 1 : MAX_RECLOSE_ATTEMPTS;
 
     return "OFF RETRY " + String(left) + "s " + String(next) + "/" +
            String(MAX_RECLOSE_ATTEMPTS);
   }
 
-  // The confirm window: above the trip level and counting, contacts still closed.
-  // This is the only warning anybody gets before the load goes away, so it says so
-  // while there is still time to shed load and avoid the trip entirely.
+  // The confirm window: above the trip level and counting, contacts still closed. The
+  // only warning anybody gets while there is still time to shed load.
   if (status == STATUS_WARNING && overTripSince != 0) {
     const unsigned long held = millis() - overTripSince;
     const unsigned long left = held >= tripConfirmMs ? 0 : (tripConfirmMs - held) / 1000UL + 1;

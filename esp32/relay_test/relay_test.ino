@@ -1,17 +1,15 @@
-// Relay bench test. Standalone on purpose: nothing here is shared with the firmware,
-// so when the contacts do not move this narrows it to the relay, its pin and its
-// supply, with no other code able to be the reason.
+// Relay bench test. Standalone on purpose: nothing here is shared with the firmware, so
+// if the contacts do not move it is the relay, its pin or its supply.
 //
 // Flips every 5 seconds and reports on the 20x4 I2C LCD and on serial at 115200.
 //
 // Wiring, the same pins the firmware uses:
 //   relay IN  -> P18       LCD SDA -> P13
-//   relay VCC -> 5V       9 LCD SCL -> P14
+//   relay VCC -> 5V        LCD SCL -> P14
 //   relay GND -> GND       LCD VCC -> 5V, GND -> GND
 //
-// The module is active low, so closing the contacts drives P18 LOW. Row 2 shows the
-// level and the meaning together: on an active low board they read as opposites, and
-// seeing them agree is the sign the wiring or the polarity is inverted.
+// The module is active low, so closing drives P18 LOW. Row 2 shows the level and the
+// meaning together: seeing them agree means the polarity is inverted.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -37,8 +35,8 @@ unsigned long lastFlip = 0;
 unsigned long lastDraw = 0;
 uint32_t cycles = 0;
 
-// Pads each row to the full width instead of clearing, so the display does not flicker
-// between updates, and truncates anything that would overrun.
+// Pads to the full width instead of clearing, so the display does not flicker, and
+// truncates anything that would overrun.
 void row(uint8_t line, const String &text) {
   if (!lcdPresent) return;
 
@@ -100,8 +98,7 @@ void setup() {
     Serial.println("The test still runs; watch serial instead.");
   }
 
-  // Driven open before anything else, the same way the firmware comes up, so the load
-  // starts de-energized and the first flip is into ON.
+  // Driven open first, the way the firmware comes up, so the first flip is into ON.
   pinMode(RELAY_PIN, OUTPUT);
   apply();
 
@@ -121,7 +118,6 @@ void loop() {
     draw();
   }
 
-  // The countdown only changes once a second, and the LCD is slow enough that redrawing
-  // every pass makes the digits flicker.
+  // Once a second: the LCD is slow enough that redrawing every pass flickers.
   if (now - lastDraw >= 1000) draw();
 }

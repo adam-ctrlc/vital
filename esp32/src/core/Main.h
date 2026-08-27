@@ -14,54 +14,38 @@
 #include "../net/WifiLink.h"
 
 #define POST_INTERVAL_MS 5000
-// How often the board asks for the operator's thresholds and delays.
-//
-// Back at thirty seconds. It was briefly five, because the heartbeat used to be the
-// only channel a relay command travelled on and half a minute made the app's off
-// button feel broken. That fix doubled the TLS exchanges this board makes, from
-// fourteen a minute to twenty four, and every one of them is a transmit burst on a
-// rail shared with a relay coil.
-//
-// The command now rides back on the reading POST instead, which happens every five
-// seconds regardless, so the button responds just as quickly on fewer requests than
-// before. What is left on the heartbeat is thresholds and delays, which change when a
-// person changes them and can wait half a minute.
+// How often the board asks for the operator's thresholds and delays. Half a minute is
+// fine because these change only when a person changes them: relay commands ride back
+// on the reading POST instead, so the app's buttons do not wait on this.
 #define HEARTBEAT_INTERVAL_MS 30000
-// Reconnection runs on its own cadence rather than riding the heartbeat. Tied to the
-// heartbeat, a drop one second after one went out was left unattended for the next 29,
-// which is the whole of the API's 30 second freshness window: the dashboard went dark
-// at almost exactly the moment the board first tried to recover.
+// Reconnection runs on its own cadence. Tied to the heartbeat, a drop just after one
+// went out went unattended for the next 29 seconds, which is the whole of the API's
+// freshness window, so the dashboard went dark before the board even tried to recover.
 #define RECONNECT_INTERVAL_MS 15000
 
 // How long to wait after the contacts move before writing the trip state to NVS.
 //
-// A flash write is an erase cycle: tens of milliseconds of raised current, and it
-// blocks. It used to happen in the same loop pass that switched the relay, microseconds
-// after the coil inrush, and an operator pressing off triggers two of them because the
-// trip and the lockout are stored separately. Three current spikes on one rail inside a
-// few milliseconds is what makes the module's LED dim and the contacts hesitate on a
-// board that switches cleanly under the bench sketch, which has no NVS at all.
+// A flash write is a blocking erase cycle, tens of milliseconds of raised current. Done
+// in the same pass that switched the relay, it lands microseconds after the coil inrush,
+// and an off press triggers two because the trip and the lockout are stored separately.
+// Those spikes on one rail are what makes the contacts hesitate.
 //
-// The cost is a window in which a reboot loses the flag. It is short, the contacts are
-// already in the safe position by then, and it is the smaller risk: the write itself was
-// helping cause the brownouts that the persistence exists to survive.
+// The cost is a short window in which a reboot loses the flag, with the contacts already
+// in the safe position. That is the smaller risk.
 #define PERSIST_SETTLE_MS 300
 
 // Wipes the saved trip, lockout and operator settings once at boot.
 //
-// A latched trip outlives a reflash, because it lives in NVS rather than in the
-// program image. A board that locked out during testing therefore comes back locked
-// out, holds the relay open, and refuses to close no matter what the load is doing,
-// which reads exactly like a dead relay. Set this to 1, flash once, then set it back
-// to 0: leaving it on would throw the operator's thresholds away on every boot and,
-// worse, discard a genuine trip across a brownout.
+// A latched trip lives in NVS, so it outlives a reflash: a board that locked out during
+// testing comes back locked out and refuses to close, which reads exactly like a dead
+// relay. Set this to 1, flash once, then set it back to 0. Left on, it discards the
+// operator's thresholds and any genuine trip on every boot.
 #define CLEAR_SAVED_STATE 0
 
-// Bounds on what a heartbeat may set the alarm thresholds to. The backend is reached
-// over TLS with certificate validation disabled, so a party controlling DNS or the
-// access point can answer in its place; without a ceiling it could set the load limit
-// to 99999, and applyThresholds would write that to NVS where it survives a reboot.
-// Sized for a 1 KVA unit with room to spare rather than to model the transformer.
+// Bounds on what a heartbeat may set the thresholds to. TLS runs without certificate
+// validation, so whoever controls DNS or the access point can answer in the backend's
+// place, and applyThresholds writes what it accepts to NVS. Sized for a 1 KVA unit with
+// room to spare.
 
 #define MIN_LOAD_THRESHOLD_VA 1.0f
 #define MAX_LOAD_THRESHOLD_VA 2000.0f
@@ -79,23 +63,18 @@ class Main {
  private:
   void post(unsigned long now);
 
-  // Adopts thresholds from a heartbeat, but only when they are valid and actually
-  // changed, so unchanged heartbeats never wear the flash. Persisting them means an
-  // edit made while the board was offline sticks once it reconnects and reboots.
+  // Adopts thresholds from a heartbeat, but only when valid and actually changed, so
+  // unchanged heartbeats never wear the flash.
   void applyThresholds(const BackendClient::HeartbeatResult &ack);
 
-  // The same treatment for the reclose delay, kept separate rather than folded into
-  // applyThresholds because the two are independent settings: one bad threshold
-  // should not stop the delay being adopted, and the threshold check returns early
-  // in several places.
+  // Kept separate from applyThresholds so one bad threshold does not stop the delays
+  // being adopted: the threshold check returns early in several places.
   void applyRecloseDelay(const BackendClient::HeartbeatResult &ack);
 
-  // And for the trip wait, which is remembered the same way and for the same reason.
   void applyTripConfirm(const BackendClient::HeartbeatResult &ack);
 
-  // Acts on an operator's relay command, whichever request carried it. Both the
-  // reading POST and the heartbeat can hand one over, and the backend guarantees only
-  // one of them ever gets it, so this needs no idea which one it came from.
+  // Acts on an operator's relay command, whichever request carried it. The backend
+  // hands it to exactly one of them, so this does not care which.
   void applyRelayCommand(BackendClient::RelayCommand command, unsigned long now);
 
   Lcd lcd;
@@ -105,24 +84,21 @@ class Main {
   TemperatureProbe probe;
   Relay relay;
   Monitor monitor;
-  // Declared after the monitor it reads: members are built in declaration order, and
-  // binding to one that does not exist yet is how that bites.
+  // Declared after the monitor it binds to: members are built in declaration order.
   LiveServer live{monitor};
   Preferences prefs;
   unsigned long lastPost = 0;
   unsigned long lastHeartbeat = 0;
   unsigned long lastReconnect = 0;
-  /// Set when the trip or lockout has changed and the flash write is still owed, with
-  /// the earliest moment it may happen. One write per pass, so the two never land
-  /// together either.
+  /// A flash write is owed, and the earliest moment it may happen. One per pass, so the
+  /// two never land together.
   bool trippedDirty = false;
   bool lockedDirty = false;
   unsigned long persistAt = 0;
   bool tripped = false;
   bool lockedOut = false;
-  /// The delay last written to NVS, so an unchanged heartbeat does not rewrite it.
+  /// What was last written to NVS, so an unchanged heartbeat does not rewrite it.
   /// Seeded in begin() from what the monitor ended up holding.
   unsigned long recloseSeconds = 0;
-  /// The trip wait last written to NVS, so an unchanged heartbeat does not rewrite it.
   unsigned long tripSeconds = 0;
 };
