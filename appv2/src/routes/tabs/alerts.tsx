@@ -11,8 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AlertListSkeleton } from '@/components/ac/alert-skeleton';
-import { MetricGrid, keyReadings } from '@/components/ac/metric-grid';
-import { Badge } from '@/components/ui/badge';
+import { MetricGrid } from '@/components/ac/metric-grid';
 import { Button } from '@/components/ui/button';
 import { Callout } from '@/components/ui/callout';
 import { Card } from '@/components/ui/card';
@@ -256,77 +255,59 @@ export default function AlertsScreen() {
       ) : null}
 
       {!turningPage && open.length > 0 ? (
-        <ul className="flex flex-col gap-3">
-          {open.map((alert) => {
-            const spec = KIND[alert.kind];
-            const KindIcon = spec.icon;
-            const showDetails = expanded.has(alert.id);
+        <section className="space-y-2">
+          <h2 className="text-muted-foreground px-1 text-sm font-medium">Active</h2>
+          <Card className="border-destructive/40 gap-0 divide-y overflow-hidden py-0">
+            {open.map((alert) => {
+              const spec = KIND[alert.kind];
+              const KindIcon = spec.icon;
+              const showDetails = expanded.has(alert.id);
+              const canExpand = hasReading(alert);
 
-            return (
-              <li key={alert.id}>
-                <Card className="border-destructive/40 gap-0 overflow-hidden py-0">
-                  <div className="flex items-start gap-3 p-4">
-                    <span className="bg-destructive/10 text-destructive grid size-10 shrink-0 place-items-center rounded-full">
-                      <KindIcon size={20} weight="fill" aria-hidden="true" />
+              return (
+                <div key={alert.id}>
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <span className="bg-destructive/10 text-destructive grid size-9 shrink-0 place-items-center rounded-full">
+                      <KindIcon size={18} weight="fill" aria-hidden="true" />
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold">{spec.title}</h3>
-                        <Badge variant="destructive">Active</Badge>
-                      </div>
-                      <time dateTime={alert.createdAt} className="text-muted-foreground text-xs">
-                        {formatShortDateTime(alert.createdAt)}
-                      </time>
-                      <p className="mt-2 flex items-baseline gap-1.5">
-                        <span className="text-destructive text-2xl font-bold leading-none tabular-nums">
-                          {alert.value.toFixed(1)}
+                    <button
+                      type="button"
+                      disabled={!canExpand}
+                      aria-expanded={canExpand ? showDetails : undefined}
+                      onClick={() => toggle(alert.id)}
+                      className="min-w-0 flex-1 cursor-pointer text-left disabled:cursor-default">
+                      <span className="flex flex-wrap items-baseline gap-x-1.5">
+                        <span className="text-sm font-semibold">{spec.title}</span>
+                        <span className="text-destructive whitespace-nowrap text-sm font-semibold tabular-nums">
+                          {alert.value.toFixed(1)} {spec.unit}
                         </span>
-                        <span className="text-destructive text-sm font-medium">{spec.unit}</span>
-                        <span className="text-muted-foreground text-xs">
+                        <span className="text-muted-foreground whitespace-nowrap text-xs">
                           limit {alert.threshold} {spec.unit}
                         </span>
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* What the transformer was doing when it crossed, from the reading the
-                      alert was raised on. */}
-                  {hasReading(alert) ? (
-                    <div className="border-t px-4 py-2.5">
-                      <button
-                        type="button"
-                        aria-expanded={showDetails}
-                        onClick={() => toggle(alert.id)}
-                        className="text-muted-foreground hover:text-foreground flex w-full cursor-pointer items-center justify-between gap-2 text-xs">
-                        <span className="tabular-nums">{keyReadings(alert)}</span>
-                        <span className="flex items-center gap-1 font-medium">
-                          Details
+                      </span>
+                      <span className="text-muted-foreground mt-0.5 flex items-center gap-1 text-[11px]">
+                        <time dateTime={alert.createdAt}>{formatShortDateTime(alert.createdAt)}</time>
+                        {canExpand ? (
                           <CaretDownIcon
-                            size={12}
+                            size={11}
                             weight="bold"
                             className={cn('transition-transform', showDetails && 'rotate-180')}
                             aria-hidden="true"
                           />
-                        </span>
-                      </button>
-                      {showDetails ? <MetricGrid m={alert} className="pt-3" /> : null}
-                    </div>
-                  ) : null}
-
-                  <div className="border-t p-3">
-                    <Button
-                      className="w-full"
-                      disabled={busy === alert.id}
-                      onClick={() => void acknowledge(alert.id)}>
+                        ) : null}
+                      </span>
+                    </button>
+                    <Button size="sm" className="shrink-0" disabled={busy === alert.id} onClick={() => void acknowledge(alert.id)}>
                       <CheckCircleIcon weight="bold" aria-hidden="true" />
                       {busy === alert.id ? 'Acknowledging...' : 'Acknowledge'}
                     </Button>
                   </div>
-                </Card>
-              </li>
-            );
-          })}
-        </ul>
+                  {showDetails ? <MetricGrid m={alert} className="px-4 pb-3" /> : null}
+                </div>
+              );
+            })}
+          </Card>
+        </section>
       ) : null}
 
       {!turningPage && handled.length > 0 ? (
