@@ -17,11 +17,6 @@ const ROLES = [
   { label: 'Admin', value: 'admin' as Role, icon: WrenchIcon },
 ];
 
-const ROLE_TITLE: Record<Role, string> = {
-  user: 'Power Utility Personnel',
-  admin: 'Maintenance Engineer',
-};
-
 type Problem = { pending: boolean; message: string };
 
 export function SignInForm({ initialIdentifier = '' }: { initialIdentifier?: string }) {
@@ -62,7 +57,6 @@ export function SignInForm({ initialIdentifier = '' }: { initialIdentifier?: str
       <div className="space-y-1.5">
         <p className="text-sm font-medium">Signing in as</p>
         <Segmented fill aria-label="Role" options={ROLES} value={role} onValueChange={setRole} />
-        <p className="text-muted-foreground text-[11px]">{ROLE_TITLE[role]}. Must match your account.</p>
       </div>
 
       <Field label="Email or username">
