@@ -55,11 +55,8 @@ export default function LoginScreen() {
         <ThemeToggle />
       </div>
 
-      {/* A div with the main role rather than <main>: on a phone, cards inside <main> run
-            edge to edge, and the sign-in card should stay a card. */}
-      <div
-        role="main"
-        className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 px-6 pb-10">
+      {/* <main>, so on a phone the cards run edge to edge like the rest of the app. */}
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 px-4 pb-10 sm:px-6">
         <header className="flex flex-col items-center gap-3 text-center">
           <img
             src="/images/phinmacoc.png"
@@ -125,7 +122,7 @@ export default function LoginScreen() {
         <p className="text-muted-foreground text-center text-[10px] uppercase tracking-widest">
           Pro Deo et Humanitate
         </p>
-      </div>
+      </main>
 
       <AppearanceModal visible={showAppearance} onClose={() => setShowAppearance(false)} />
       <AboutModal visible={showAbout} onClose={() => setShowAbout(false)} />
