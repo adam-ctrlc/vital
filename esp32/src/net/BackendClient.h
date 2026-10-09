@@ -6,6 +6,14 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 
+// Bounds on how long one request may hold the loop. Left at the library defaults, a TLS
+// handshake on a link that is up but losing packets waits up to 120 s, and nothing
+// else runs meanwhile: no posts, no reconnect, no live server. The dashboard reads that
+// as the board being offline for minutes. These still cover a Vercel cold start.
+#define HTTP_CONNECT_TIMEOUT_MS 5000
+#define HTTP_RESPONSE_TIMEOUT_MS 8000
+#define TLS_HANDSHAKE_TIMEOUT_S 8
+
 class BackendClient {
  public:
   BackendClient() = default;
@@ -37,6 +45,9 @@ class BackendClient {
   /// have doubled the TLS exchanges, and with them the transmit bursts on the supply.
   struct ReadingResult {
     bool ok = false;
+    /// The request got an HTTP answer, whatever the status. False is a transport
+    /// failure: no route, no handshake, no response.
+    bool reached = false;
     RelayCommand relayCommand = RELAY_NONE;
   };
 
@@ -53,6 +64,13 @@ class BackendClient {
   /// Still setInsecure: pinning a root CA is the fix, and until then the board
   /// bounds-checks everything a response tells it.
   WiFiClientSecure &shared();
+
+  /// Applies the timeouts above to one request.
+  static void bound(HTTPClient &http);
+
+  /// Drops the kept-alive socket after a transport failure, so the next request starts
+  /// a clean handshake instead of writing into a connection that is already dead.
+  void dropConnection(int code);
 
   WiFiClientSecure secure;
   bool secureReady = false;

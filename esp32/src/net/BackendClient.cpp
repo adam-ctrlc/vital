@@ -28,6 +28,7 @@ BackendClient::HeartbeatResult BackendClient::postHeartbeat(bool lockedOut) {
   HTTPClient http;
   http.begin(shared(), String(BACKEND_URL) + "/api/v1/device/heartbeat");
   http.setReuse(true);
+  bound(http);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-device-key", DEVICE_KEY);
 
@@ -60,6 +61,7 @@ BackendClient::HeartbeatResult BackendClient::postHeartbeat(bool lockedOut) {
     }
   }
   http.end();
+  dropConnection(code);
 
   return result;
 }
@@ -98,12 +100,14 @@ BackendClient::ReadingResult BackendClient::postReading(float voltage, float cur
   // Asks the server to hold the socket open, which is what lets the next post skip the
   // handshake.
   http.setReuse(true);
+  bound(http);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-device-key", DEVICE_KEY);
 
   int code = http.POST(body);
   Serial.print("POST /readings -> ");
   Serial.println(code);
+  result.reached = code > 0;
 
   if (code >= 200 && code < 300) {
     result.ok = true;
@@ -128,6 +132,7 @@ BackendClient::ReadingResult BackendClient::postReading(float voltage, float cur
     Serial.println(http.errorToString(code));
   }
   http.end();
+  dropConnection(code);
 
   return result;
 }
@@ -135,10 +140,20 @@ BackendClient::ReadingResult BackendClient::postReading(float voltage, float cur
 WiFiClientSecure &BackendClient::shared() {
   if (!secureReady) {
     secure.setInsecure();
+    secure.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
     secureReady = true;
   }
 
   return secure;
+}
+
+void BackendClient::bound(HTTPClient &http) {
+  http.setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
+  http.setTimeout(HTTP_RESPONSE_TIMEOUT_MS);
+}
+
+void BackendClient::dropConnection(int code) {
+  if (code < 0) secure.stop();
 }
 
 bool BackendClient::addMeasurement(JsonDocument &doc, const char *key, float value,

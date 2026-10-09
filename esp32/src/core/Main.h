@@ -22,6 +22,11 @@
 // went out went unattended for the next 29 seconds, which is the whole of the API's
 // freshness window, so the dashboard went dark before the board even tried to recover.
 #define RECONNECT_INTERVAL_MS 15000
+// Posts in a row that got no HTTP answer at all before the link is rejoined. The driver
+// can keep reporting connected long after traffic stopped, and until it notices, the
+// reconnect above never fires. Three is fifteen seconds of silence, inside the API's
+// thirty second freshness window.
+#define DEAD_LINK_AFTER_FAILED_POSTS 3
 
 // How long to wait after the contacts move before writing the trip state to NVS.
 //
@@ -90,6 +95,7 @@ class Main {
   unsigned long lastPost = 0;
   unsigned long lastHeartbeat = 0;
   unsigned long lastReconnect = 0;
+  uint8_t unreachedPosts = 0;
   /// A flash write is owed, and the earliest moment it may happen. One per pass, so the
   /// two never land together.
   bool trippedDirty = false;

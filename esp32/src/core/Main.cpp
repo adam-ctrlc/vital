@@ -158,6 +158,14 @@ void Main::post(unsigned long now) {
                           s.frequency, s.energy, monitor.relayClosed());
 
   if (result.ok) applyRelayCommand(result.relayCommand, now);
+
+  if (result.reached) {
+    unreachedPosts = 0;
+  } else if (++unreachedPosts >= DEAD_LINK_AFTER_FAILED_POSTS) {
+    unreachedPosts = 0;
+    lastReconnect = now;
+    net.reconnect();
+  }
 }
 
 void Main::applyRelayCommand(BackendClient::RelayCommand command, unsigned long now) {
