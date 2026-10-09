@@ -24,6 +24,8 @@ pub struct ListQuery {
     pub q: Option<String>,
     /// Exact match on `admin` or `user`.
     pub role: Option<String>,
+    /// Exact match on `pending` or `active`.
+    pub status: Option<String>,
 }
 
 /// Trims a filter and treats blank as "no filter".
@@ -38,6 +40,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list).post(create))
         .route("/username-suggestion", get(username_suggestion))
         .route("/{id}", axum::routing::delete(remove).put(update))
+        .route("/{id}/approve", axum::routing::post(approve))
 }
 
 async fn list(
@@ -52,6 +55,14 @@ async fn list(
         && role != "user"
     {
         return Err(AppError::BadRequest(format!("invalid role: {role}")));
+    }
+
+    let status = filter(query.status);
+    if let Some(status) = status.as_deref()
+        && status != "pending"
+        && status != "active"
+    {
+        return Err(AppError::BadRequest(format!("invalid status: {status}")));
     }
 
     let conn = state.db.conn()?;
@@ -78,11 +89,13 @@ async fn list(
                         or last_name like '%' || ?2 || '%' escape '\\'
                         or trim(first_name || ' ' || coalesce(middle_name || ' ', '') || last_name)
                            like '%' || ?2 || '%' escape '\\')
+                   and (?3 is null or status = ?3)
                  order by created_at"
             ),
             params![
                 role,
-                filter(query.q).map(|needle| search::escape_like(&needle))
+                filter(query.q).map(|needle| search::escape_like(&needle)),
+                status
             ],
         )
         .await?;
@@ -154,9 +167,37 @@ async fn create(
         }
     }
 
-    service::create(&conn, &body).await?;
+    service::create(&conn, &body, "active").await?;
 
     Ok(StatusCode::CREATED)
+}
+
+/// Lets a self-registered account sign in. Only a pending account can be approved, so a
+/// second tap, or two admins at once, finds nothing to change rather than an error worth
+/// showing.
+async fn approve(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<User>> {
+    let conn = state.db.conn()?;
+
+    conn.execute(
+        "update users set status = 'active', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         where id = ?1 and status = 'pending'",
+        [id.to_string()],
+    )
+    .await?;
+
+    let mut rows = conn
+        .query(
+            concat!("select ", user_columns!(), " from users where id = ?1"),
+            [id.to_string()],
+        )
+        .await?;
+    let row = rows.next().await?.ok_or(AppError::NotFound)?;
+
+    Ok(Json(User::from_row(&row)?))
 }
 
 async fn update(

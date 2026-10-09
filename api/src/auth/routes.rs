@@ -16,7 +16,8 @@ use crate::auth::extract::AuthUser;
 use crate::auth::{Role, jwt, password};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::users::model::{clean_optional, clean_username, full_name, parse_uuid};
+use crate::users::model::{CreateUser, clean_optional, clean_username, full_name, parse_uuid};
+use crate::users::service as users_service;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +79,8 @@ struct Credentials {
     middle_name: Option<String>,
     last_name: String,
     full_name: String,
+    /// `pending` until an admin approves a self-registered account.
+    status: String,
 }
 
 /// The columns every account lookup selects, in the order `Credentials::from_row`
@@ -85,7 +88,7 @@ struct Credentials {
 /// name is spelled out once instead of in every statement that returns an account.
 macro_rules! credentials_columns {
     () => {
-        "id, email, username, password_hash, role, first_name, middle_name, last_name"
+        "id, email, username, password_hash, role, first_name, middle_name, last_name, status"
     };
 }
 
@@ -118,6 +121,7 @@ impl Credentials {
             first_name,
             middle_name,
             last_name,
+            status: row.get(8)?,
         })
     }
 }
@@ -134,6 +138,30 @@ async fn find_account(
         Some(row) => Credentials::from_row(&row).map(Some),
         None => Ok(None),
     }
+}
+
+/// A sign-up from the sign-in page. Always a standard user, and pending until an admin
+/// approves it, so registering grants nothing on its own.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterRequest {
+    pub first_name: String,
+    #[serde(default)]
+    pub middle_name: Option<String>,
+    pub last_name: String,
+    /// Optional: generated from the name when blank.
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterResponse {
+    /// The username the account signs in with, which may have been generated.
+    pub username: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,6 +190,11 @@ pub struct ChangePassword {
 const LOGIN_BURST: u32 = 10;
 const LOGIN_REPLENISH_SECONDS: u64 = 10;
 
+/// Sign-ups are rarer than sign-ins and each one lands in an admin's queue, so the bucket
+/// is smaller: a few up front, then one a minute.
+const REGISTER_BURST: u32 = 3;
+const REGISTER_REPLENISH_SECONDS: u64 = 60;
+
 /// Throttles `/auth/login` by caller IP.
 ///
 /// Scoped to this one route on purpose: the ESP32 posts a reading every ten seconds
@@ -173,33 +206,116 @@ const LOGIN_REPLENISH_SECONDS: u64 = 10;
 /// attack spread across many addresses. It raises the cost of the easy case. The
 /// airtight version is a `failed_attempts` column keyed on the account, which needs a
 /// migration. The `warn` logging in `login` below is what makes either case visible.
+/// A per-IP limiter for one public route. A macro because the layer's type spells out
+/// the extractor, middleware and body, and only the expression needs to be written once.
+macro_rules! throttle {
+    ($burst:expr, $replenish_seconds:expr, $name:literal) => {{
+        let config = GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
+            .period(Duration::from_secs($replenish_seconds))
+            .burst_size($burst)
+            .finish()
+            .ok_or_else(|| AppError::InvalidEnv(concat!($name, " rate limit").to_owned()))?;
+
+        GovernorLayer::new(config).error_handler(|error| match error {
+            // Floored at a second: governor reports the wait in whole seconds, so a caller
+            // part way through the current one is told to retry in "0s", which reads as an
+            // invitation to hammer the endpoint again immediately.
+            GovernorError::TooManyRequests { wait_time, .. } => {
+                AppError::TooManyRequests(wait_time.max(1)).into_response()
+            }
+            // Only reachable if neither a proxy header nor the peer address is available,
+            // which means the server is wired up wrong rather than the caller misbehaving.
+            other => {
+                tracing::error!(
+                    ?other,
+                    concat!($name, " rate limiter could not identify the caller")
+                );
+                AppError::Token.into_response()
+            }
+        })
+    }};
+}
+
 pub fn router() -> AppResult<Router<AppState>> {
-    let config = GovernorConfigBuilder::default()
-        .key_extractor(SmartIpKeyExtractor)
-        .period(Duration::from_secs(LOGIN_REPLENISH_SECONDS))
-        .burst_size(LOGIN_BURST)
-        .finish()
-        .ok_or_else(|| AppError::InvalidEnv("login rate limit".to_owned()))?;
-
-    let throttle = GovernorLayer::new(config).error_handler(|error| match error {
-        // Floored at a second: governor reports the wait in whole seconds, so a caller
-        // part way through the current one is told to retry in "0s", which reads as an
-        // invitation to hammer the endpoint again immediately.
-        GovernorError::TooManyRequests { wait_time, .. } => {
-            AppError::TooManyRequests(wait_time.max(1)).into_response()
-        }
-        // Only reachable if neither a proxy header nor the peer address is available,
-        // which means the server is wired up wrong rather than the caller misbehaving.
-        other => {
-            tracing::error!(?other, "login rate limiter could not identify the caller");
-            AppError::Token.into_response()
-        }
-    });
-
     Ok(Router::new()
-        .route("/login", post(login).layer(throttle))
+        .route(
+            "/login",
+            post(login).layer(throttle!(LOGIN_BURST, LOGIN_REPLENISH_SECONDS, "login")),
+        )
+        .route(
+            "/register",
+            post(register).layer(throttle!(
+                REGISTER_BURST,
+                REGISTER_REPLENISH_SECONDS,
+                "register"
+            )),
+        )
         .route("/me", get(me).put(update_me))
         .route("/password", put(change_password)))
+}
+
+/// Creates a pending standard account from the sign-in page. It cannot sign in until an
+/// admin approves it. The same checks as an admin-created account, minus the role, which
+/// is always `user`: nobody can register themselves into admin.
+async fn register(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterRequest>,
+) -> AppResult<(StatusCode, Json<RegisterResponse>)> {
+    if body.first_name.trim().is_empty() {
+        return Err(AppError::BadRequest("first name is required".to_owned()));
+    }
+    if body.last_name.trim().is_empty() {
+        return Err(AppError::BadRequest("last name is required".to_owned()));
+    }
+    if body.password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "password must be at least 8 characters".to_owned(),
+        ));
+    }
+    let email = clean_optional(body.email.as_deref()).map(|value| value.to_lowercase());
+    if email.as_deref().is_some_and(|value| !value.contains('@')) {
+        return Err(AppError::BadRequest("invalid email".to_owned()));
+    }
+
+    let conn = state.db.conn()?;
+
+    if let Some(email) = email.as_deref() {
+        let mut taken = conn
+            .query("select 1 from users where email = ?1", [email])
+            .await?;
+        if taken.next().await?.is_some() {
+            return Err(AppError::BadRequest("email already registered".to_owned()));
+        }
+    }
+
+    let username = match body.username.as_deref().map(clean_username) {
+        Some(name) if !name.is_empty() => {
+            let mut clash = conn
+                .query("select 1 from users where username = ?1", [name.as_str()])
+                .await?;
+            if clash.next().await?.is_some() {
+                return Err(AppError::BadRequest("username already taken".to_owned()));
+            }
+            name
+        }
+        _ => users_service::suggest_username(&conn, &body.first_name, &body.last_name).await?,
+    };
+
+    let account = CreateUser {
+        email,
+        password: body.password,
+        role: Role::User,
+        first_name: body.first_name,
+        middle_name: body.middle_name,
+        last_name: body.last_name,
+        username: Some(username.clone()),
+    };
+    users_service::create(&conn, &account, "pending").await?;
+
+    tracing::info!(%username, "account registered, awaiting approval");
+
+    Ok((StatusCode::CREATED, Json(RegisterResponse { username })))
 }
 
 async fn login(
@@ -232,6 +348,12 @@ async fn login(
     if !password::verify(&body.password, &found.password_hash) {
         tracing::warn!(%identifier, reason = "wrong password", "login failed");
         return Err(AppError::InvalidCredentials);
+    }
+
+    // After the password, so only the account's owner learns it exists and is waiting.
+    if found.status == "pending" {
+        tracing::info!(%identifier, "login refused: awaiting approval");
+        return Err(AppError::PendingApproval);
     }
 
     let role: Role = found.role.parse()?;

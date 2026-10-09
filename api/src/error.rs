@@ -21,6 +21,9 @@ pub enum AppError {
     Unauthorized,
     #[error("admin access required")]
     Forbidden,
+    /// A self-registered account an admin has not approved yet.
+    #[error("your account is waiting for an admin to approve it")]
+    PendingApproval,
     #[error("not found")]
     NotFound,
     #[error("{0}")]
@@ -101,7 +104,7 @@ impl IntoResponse for AppError {
             Self::InvalidCredentials | Self::PortalMismatch(_) | Self::Unauthorized => {
                 StatusCode::UNAUTHORIZED
             }
-            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Forbidden | Self::PendingApproval => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,

@@ -19,6 +19,8 @@ pub struct User {
     pub middle_name: Option<String>,
     pub last_name: String,
     pub full_name: String,
+    /// `pending` until an admin approves a self-registered account, then `active`.
+    pub status: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -32,7 +34,7 @@ pub struct User {
 /// definition instead of one in Rust and one repeated in every statement.
 macro_rules! user_columns {
     () => {
-        "id, email, username, role, first_name, middle_name, last_name, created_at"
+        "id, email, username, role, first_name, middle_name, last_name, created_at, status"
     };
 }
 
@@ -58,6 +60,7 @@ impl User {
             middle_name,
             last_name,
             created_at: parse_timestamp(&row.get::<String>(7)?)?,
+            status: row.get(8)?,
         })
     }
 }

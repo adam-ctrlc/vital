@@ -25,6 +25,9 @@ create table if not exists users (
     username      text not null unique,
     password_hash text not null,
     role          text not null check (role in ('admin', 'user')),
+    -- 'pending' for a self-registered account until an admin approves it. Everything an
+    -- admin creates, and every account from before registration existed, is 'active'.
+    status        text not null default 'active' check (status in ('pending', 'active')),
     first_name    text not null default '',
     middle_name   text,
     last_name     text not null default '',

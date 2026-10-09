@@ -43,7 +43,9 @@ async fn is_taken(conn: &Connection, username: &str) -> AppResult<bool> {
     Ok(rows.next().await?.is_some())
 }
 
-pub async fn create(conn: &Connection, body: &CreateUser) -> AppResult<()> {
+/// Whether a new account may sign in straight away (`active`, created by an admin) or has
+/// to wait for one to approve it (`pending`, registered from the sign-in page).
+pub async fn create(conn: &Connection, body: &CreateUser, status: &str) -> AppResult<()> {
     let password_hash = password::hash(&body.password)?;
 
     // A blank or absent username defers to the generation rule, so it has one home
@@ -57,8 +59,8 @@ pub async fn create(conn: &Connection, body: &CreateUser) -> AppResult<()> {
     // as text, which is what a uuid already is on the wire.
     conn.execute(
         "insert into users (id, email, username, password_hash, role,
-                            first_name, middle_name, last_name)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            first_name, middle_name, last_name, status)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             Uuid::new_v4().to_string(),
             clean_optional(body.email.as_deref()).map(|value| value.to_lowercase()),
@@ -68,6 +70,7 @@ pub async fn create(conn: &Connection, body: &CreateUser) -> AppResult<()> {
             body.first_name.trim(),
             clean_optional(body.middle_name.as_deref()),
             body.last_name.trim(),
+            status,
         ],
     )
     .await?;
