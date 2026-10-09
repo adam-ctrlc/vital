@@ -3,7 +3,9 @@ import { APP_VERSION } from './app-version';
 import { compareVersions, MANIFEST_URL, parseManifest, planUpdate, type BundleRelease } from './manifest';
 import { getUpdateState, setBundlePhase, setUpdateState } from './store';
 
-const RECHECK_MS = 30 * 60 * 1000;
+// Every return to the app looks for an update, at most once a minute: the check is one small
+// download, and an update that waits half an hour to be noticed reads as no update at all.
+const RECHECK_MS = 60 * 1000;
 const RETRY_MS = 60 * 1000;
 const ATTEMPT_KEY = 'vital.update-attempt';
 const BROKEN_KEY = 'vital.update-broken';
