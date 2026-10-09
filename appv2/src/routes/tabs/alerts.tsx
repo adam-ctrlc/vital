@@ -54,13 +54,23 @@ const SCOPES = [
   { label: 'All', value: true },
 ];
 
+/** 42.0s under a minute, then 14m 3s, then 2h 5m: seconds stop mattering past a minute. */
+function formatDuration(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const whole = Math.round(seconds);
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m ${whole % 60}s`;
+}
+
 /**
  * "Responded in 42.0s by Maria Santos". The API sends only the acknowledger's account id,
  * so the name is whatever `nameOf` can resolve; an id it cannot resolve is left out rather
  * than shown, because a raw id means nothing to anyone reading the card.
  */
 function responseLabel(alert: Alert, nameOf: (id: string) => string | null): string {
-  const took = alert.responseMs === null ? null : `${(alert.responseMs / 1000).toFixed(1)}s`;
+  const took = alert.responseMs === null ? null : formatDuration(alert.responseMs);
   const name = alert.acknowledgedBy ? nameOf(alert.acknowledgedBy) : null;
   const by = name ? ` by ${name}` : '';
 
@@ -338,16 +348,23 @@ export default function AlertsScreen() {
                   <span className="bg-muted text-muted-foreground grid size-9 shrink-0 place-items-center rounded-full">
                     <KindIcon size={18} weight="bold" aria-hidden="true" />
                   </span>
+                  {/* On a phone the time gets a line of its own, so the title and the
+                      response line each have the full width; from sm up it sits to the right. */}
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline gap-1.5">
+                    <span className="flex flex-wrap items-baseline gap-x-1.5">
                       <span className="text-sm font-semibold">{spec.title}</span>
-                      <span className="text-muted-foreground text-xs tabular-nums">
+                      <span className="text-muted-foreground whitespace-nowrap text-xs tabular-nums">
                         {alert.value.toFixed(1)} {spec.unit}
                       </span>
                     </span>
-                    <span className="text-muted-foreground block text-xs">{responseLabel(alert, nameOf)}</span>
+                    <span className="text-muted-foreground mt-0.5 block text-xs">{responseLabel(alert, nameOf)}</span>
+                    <time dateTime={alert.createdAt} className="text-muted-foreground mt-0.5 block text-[11px] sm:hidden">
+                      {formatShortDateTime(alert.createdAt)}
+                    </time>
                   </span>
-                  <time dateTime={alert.createdAt} className="text-muted-foreground shrink-0 text-right text-[11px]">
+                  <time
+                    dateTime={alert.createdAt}
+                    className="text-muted-foreground hidden shrink-0 whitespace-nowrap text-right text-[11px] sm:block">
                     {formatShortDateTime(alert.createdAt)}
                   </time>
                   {canExpand ? (
