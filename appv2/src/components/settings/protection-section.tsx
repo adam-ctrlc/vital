@@ -389,21 +389,16 @@ function DelaySheet({
         <p className="text-muted-foreground text-xs">{spec.hint}</p>
       </div>
 
-      <div>
-        <Slider
-          min={spec.min}
-          max={spec.max}
-          step={spec.step}
-          value={draft}
-          color={primary.hex}
-          aria-label={spec.title}
-          onValueChange={setDraft}
-        />
-        <div className="text-muted-foreground flex justify-between text-[11px]">
-          <span>{formatDelay(spec.min)}</span>
-          <span>{formatDelay(spec.max)}</span>
-        </div>
-      </div>
+      <Slider
+        min={spec.min}
+        max={spec.max}
+        step={spec.step}
+        value={draft}
+        color={primary.hex}
+        aria-label={spec.title}
+        formatEnd={formatDelay}
+        onValueChange={setDraft}
+      />
 
       {error ? <p className="text-destructive text-sm">{error}</p> : null}
 

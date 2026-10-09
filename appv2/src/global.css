@@ -159,3 +159,99 @@
 .skeleton-pulse {
   animation: skeleton-pulse 900ms ease-in-out infinite alternate;
 }
+
+/* The range slider (components/ui/slider.tsx): a rounded track filled up to the thumb in
+   the slider's colour, and a white thumb ringed in it. The input is 44px tall, a full
+   touch target, with the 8px track centred in it. The sizes sit on the wrapper, which the
+   marks under the track measure from too. */
+.slider-field {
+  --slider-thumb: 1.375rem;
+  --slider-track: 0.5rem;
+}
+
+.slider {
+  display: block;
+  width: 100%;
+  height: 2.75rem;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.slider:focus {
+  outline: none;
+}
+
+.slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: var(--slider-track);
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--slider-color) var(--slider-fill),
+    hsl(var(--muted-foreground) / 0.2) var(--slider-fill)
+  );
+}
+
+.slider::-moz-range-track {
+  height: var(--slider-track);
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--slider-color) var(--slider-fill),
+    hsl(var(--muted-foreground) / 0.2) var(--slider-fill)
+  );
+}
+
+.slider::-webkit-slider-thumb {
+  width: var(--slider-thumb);
+  height: var(--slider-thumb);
+  margin-top: calc((var(--slider-track) - var(--slider-thumb)) / 2);
+  border: 3px solid var(--slider-color);
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  appearance: none;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.slider::-moz-range-thumb {
+  box-sizing: border-box;
+  width: var(--slider-thumb);
+  height: var(--slider-thumb);
+  border: 3px solid var(--slider-color);
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.slider:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.25),
+    0 0 0 5px color-mix(in srgb, var(--slider-color) 30%, transparent);
+}
+
+.slider:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.25),
+    0 0 0 5px color-mix(in srgb, var(--slider-color) 30%, transparent);
+}
+
+.slider:enabled:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.slider:enabled:active::-moz-range-thumb {
+  transform: scale(1.15);
+}

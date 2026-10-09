@@ -38,7 +38,6 @@ import type { Role } from '@/features/auth/types';
 import {
   MAX_SECONDS,
   MIN_SECONDS,
-  STEPS,
   STEP_SECONDS,
   formatDuration,
 } from '@/features/notifications/alert-length';
@@ -546,31 +545,17 @@ export default function ProfileScreen() {
           </p>
           <p className="text-muted-foreground text-xs">How long each alert buzzes.</p>
         </div>
-        <div className="space-y-1">
-          <Slider
-            aria-label="Alert length"
-            min={MIN_SECONDS}
-            max={MAX_SECONDS}
-            step={STEP_SECONDS}
-            value={lengthDraft}
-            color={primary.hex}
-            onValueChange={(seconds) => setLengthDraft(Math.round(seconds))}
-          />
-          {/* One notch per position the thumb can land on, so the step is visible. */}
-          <div className="flex justify-between px-2" aria-hidden="true">
-            {STEPS.map((seconds) => (
-              <span
-                key={seconds}
-                className={cn('h-1.5 w-px', seconds > lengthDraft && 'bg-muted-foreground opacity-[0.35]')}
-                style={seconds <= lengthDraft ? { backgroundColor: primary.hex } : undefined}
-              />
-            ))}
-          </div>
-          <p className="text-muted-foreground flex justify-between text-[11px]">
-            <span>{formatDuration(MIN_SECONDS)}</span>
-            <span>{formatDuration(MAX_SECONDS)}</span>
-          </p>
-        </div>
+        <Slider
+          aria-label="Alert length"
+          min={MIN_SECONDS}
+          max={MAX_SECONDS}
+          step={STEP_SECONDS}
+          value={lengthDraft}
+          color={primary.hex}
+          marks
+          formatEnd={formatDuration}
+          onValueChange={(seconds) => setLengthDraft(Math.round(seconds))}
+        />
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1" onClick={close}>
             Cancel

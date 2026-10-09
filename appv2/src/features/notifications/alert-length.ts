@@ -13,12 +13,6 @@ export const MAX_SECONDS = 600;
 export const DEFAULT_SECONDS = 30;
 export const STEP_SECONDS = 30;
 
-/** Every position the slider can land on, for drawing the notches under it. */
-export const STEPS: number[] = Array.from(
-  { length: Math.floor((MAX_SECONDS - MIN_SECONDS) / STEP_SECONDS) + 1 },
-  (_, index) => MIN_SECONDS + index * STEP_SECONDS
-);
-
 /**
  * The repeating buzz shape, in milliseconds: vibrate, pause, vibrate, longer pause.
  *
