@@ -7,6 +7,7 @@ import { Panel, Stats } from '@/components/analysis/stats';
 import { useChartColors } from '@/components/analysis/use-chart-colors';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Pager } from '@/components/ui/pager';
 import { useAuth } from '@/features/auth/context';
 import type { Insights } from '@/features/insights/types';
 import * as settingsApi from '@/features/settings/api';
@@ -14,7 +15,7 @@ import type { Settings } from '@/features/settings/types';
 import { formatShortDateTime } from '@/lib/datetime';
 import { formatMinutes, formatSeconds } from '@/lib/units';
 
-const EVENTS_SHOWN = 8;
+const EVENTS_PER_PAGE = 5;
 
 export default function PowerQualityScreen() {
   return (
@@ -66,11 +67,13 @@ function PowerQuality({ data, reload }: { data: Insights; reload: () => void }) 
   const colors = useChartColors();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [editing, setEditing] = useState(false);
-  const [allEvents, setAllEvents] = useState(false);
+  const [eventsOffset, setEventsOffset] = useState(0);
   const pq = data.powerQuality;
-  const events = allEvents ? pq.events : pq.events.slice(0, EVENTS_SHOWN);
+  const events = pq.events.slice(eventsOffset, eventsOffset + EVENTS_PER_PAGE);
   const nominal = pq.nominalVoltageV;
   const v = (value: number | null) => (value === null ? 'No data' : `${value.toFixed(1)} V`);
+
+  useEffect(() => setEventsOffset(0), [data]);
 
   useEffect(() => {
     if (token) settingsApi.read(token).then(setSettings).catch(() => undefined);
@@ -109,31 +112,33 @@ function PowerQuality({ data, reload }: { data: Insights; reload: () => void }) 
       </Panel>
 
       {pq.events.length > 0 ? (
-        <Panel title="Worst events" flush>
-          <ul className="divide-y border-t">
-            {events.map((event) => (
-              <li key={`${event.at}-${event.kind}`} className="flex items-center gap-3 px-4 py-3 text-sm">
-                <Badge
-                  variant={event.kind === 'sag' ? 'secondary' : 'destructive'}
-                  className={event.kind === 'sag' ? 'bg-amber-500 text-white' : undefined}>{event.kind === 'sag' ? 'Sag' : 'Swell'}</Badge>
-                <span className="min-w-0 flex-1">
-                  <span className="font-semibold tabular-nums">{event.voltageV.toFixed(1)} V</span>
-                  <span className="text-muted-foreground"> for {formatSeconds(event.durationSeconds)}</span>
-                </span>
-                <time dateTime={event.at} className="text-muted-foreground shrink-0 text-xs">
-                  {formatShortDateTime(event.at)}
-                </time>
-              </li>
-            ))}
-          </ul>
-          {pq.events.length > EVENTS_SHOWN ? (
-            <div className="border-t p-2">
-              <Button variant="ghost" size="sm" className="w-full" onClick={() => setAllEvents(!allEvents)}>
-                {allEvents ? 'Show fewer' : `Show all ${pq.events.length}`}
-              </Button>
-            </div>
-          ) : null}
-        </Panel>
+        <>
+          <Panel title="Worst events" flush>
+            <ul className="divide-y border-t">
+              {events.map((event) => (
+                <li key={`${event.at}-${event.kind}`} className="flex items-center gap-3 px-4 py-3 text-sm">
+                  <Badge
+                    variant={event.kind === 'sag' ? 'secondary' : 'destructive'}
+                    className={event.kind === 'sag' ? 'bg-amber-500 text-white' : undefined}>{event.kind === 'sag' ? 'Sag' : 'Swell'}</Badge>
+                  <span className="min-w-0 flex-1">
+                    <span className="font-semibold tabular-nums">{event.voltageV.toFixed(1)} V</span>
+                    <span className="text-muted-foreground"> for {formatSeconds(event.durationSeconds)}</span>
+                  </span>
+                  <time dateTime={event.at} className="text-muted-foreground shrink-0 text-xs">
+                    {formatShortDateTime(event.at)}
+                  </time>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+          <Pager
+            total={pq.events.length}
+            limit={EVENTS_PER_PAGE}
+            offset={eventsOffset}
+            onOffsetChange={setEventsOffset}
+            noun="event"
+          />
+        </>
       ) : null}
 
       <Panel title="Power factor" description="How much of the current does useful work. 1.00 is ideal; under 0.85 is low.">

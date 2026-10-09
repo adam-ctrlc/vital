@@ -7,6 +7,7 @@ import { NumberSheet } from '@/components/analysis/number-sheet';
 import { Panel, Stats } from '@/components/analysis/stats';
 import { useChartColors } from '@/components/analysis/use-chart-colors';
 import { Button } from '@/components/ui/button';
+import { Pager } from '@/components/ui/pager';
 import { useAuth } from '@/features/auth/context';
 import type { Insights } from '@/features/insights/types';
 import * as settingsApi from '@/features/settings/api';
@@ -22,6 +23,8 @@ export default function EnergyScreen() {
   );
 }
 
+const DAYS_PER_PAGE = 10;
+
 function Energy({ data, reload }: { data: Insights; reload: () => void }) {
   const { token } = useAuth();
   const colors = useChartColors();
@@ -29,6 +32,10 @@ function Energy({ data, reload }: { data: Insights; reload: () => void }) {
   const [editing, setEditing] = useState(false);
   const { energy } = data;
   const readDays = energy.days.filter((day) => day.samples > 0).reverse();
+  const [daysOffset, setDaysOffset] = useState(0);
+  const pageDays = readDays.slice(daysOffset, daysOffset + DAYS_PER_PAGE);
+
+  useEffect(() => setDaysOffset(0), [data]);
 
   useEffect(() => {
     if (token) settingsApi.read(token).then(setSettings).catch(() => undefined);
@@ -94,7 +101,7 @@ function Energy({ data, reload }: { data: Insights; reload: () => void }) {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {readDays.map((day) => (
+              {pageDays.map((day) => (
                 <tr key={day.date}>
                   <th scope="row" className="whitespace-nowrap px-4 py-2.5 text-left font-medium">
                     {dateLabel(day.date)}
@@ -112,6 +119,7 @@ function Energy({ data, reload }: { data: Insights; reload: () => void }) {
           </table>
         </div>
       </Panel>
+      <Pager total={readDays.length} limit={DAYS_PER_PAGE} offset={daysOffset} onOffsetChange={setDaysOffset} noun="day" />
 
       {settings ? (
         <NumberSheet
