@@ -51,6 +51,11 @@ create table if not exists readings (
     -- reading, which has no contacts to report.
     relay_closed      integer,
     status            text not null check (status in ('normal', 'overload')),
+    -- The limits in force when this was recorded, so the status can be read against
+    -- the alarm it was judged by. Null for rows from before they were kept.
+    load_threshold_va real,
+    trip_threshold_va real,
+    temp_threshold_c  real,
     source            text not null default 'simulator',
     recorded_at       text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     created_at        text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -136,7 +141,13 @@ create table if not exists device_telemetry (
     uptime_seconds   integer,
     -- What an operator has asked the relay to do, waiting for the board to come and ask.
     relay_command    text check (relay_command is null or relay_command in ('open', 'close')),
+    -- Increments with every request; the board acknowledges by id (see migration 0024).
+    relay_command_id integer not null default 0,
+    -- When the pending command was requested, so a stale one can be dropped.
+    relay_command_at text,
     relay_locked_out integer not null default 0,
+    -- Why the board last restarted, as it reported it: poweron, brownout, panic, ...
+    reset_reason     text,
     reported_at      text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
