@@ -16,6 +16,11 @@
 // 1 = relay IN driven through an NPN (close = HIGH), 0 = IN wired straight to the pin (close = LOW)
 #define RELAY_VIA_TRANSISTOR 1
 
+// At or above this current for the trip delay the relay opens, like the VA trip threshold.
+#define CURRENT_TRIP_AMPS 9.09f
+// At or above this current the relay opens on the spot: no delay, and no automatic reclose.
+#define INSTANT_TRIP_AMPS 90.91f
+
 // Protection task
 #define SAMPLE_INTERVAL_MS 1000
 #define PROTECTION_TASK_CORE 1

@@ -16,6 +16,8 @@ void Controller::begin() {
   settings.begin();
 
   const uint32_t now = millis();
+  protection.setCurrentTripAmps(CURRENT_TRIP_AMPS);
+  protection.setInstantTripAmps(INSTANT_TRIP_AMPS);
   settings.load(protection, now);
   savedTripped = protection.tripped();
   savedLockedOut = protection.lockedOut();
@@ -85,7 +87,11 @@ void Controller::run() {
 
 void Controller::sample(uint32_t now) {
   reading = sensors.read();
-  protection.update(reading.apparentPower(), reading.temperature, now);
+  const bool wasInstant = protection.instantTripped();
+  protection.update(reading.apparentPower(), reading.current, reading.temperature, now);
+  if (protection.instantTripped() && !wasInstant) {
+    Serial.printf("INSTANT TRIP: %.2f A at or above %.2f A, locked out\n", reading.current, INSTANT_TRIP_AMPS);
+  }
   if (protection.takeAlarmEdge()) changes++;
 
   if (!stable && now >= STABLE_AFTER_MS) {
@@ -196,6 +202,8 @@ void Controller::show(uint32_t now) {
 
   if (uint32_t held = protection.secondsHeldOpen(now)) {
     snprintf(rows[3], sizeof rows[3], "POWER DIP, WAIT %lus", (unsigned long)held);
+  } else if (protection.instantTripped()) {
+    snprintf(rows[3], sizeof rows[3], "OVERCURRENT LOCKOUT");
   } else if (protection.lockedOut()) {
     snprintf(rows[3], sizeof rows[3], "RLY LOCK-NEEDS ADMIN");
   } else if (protection.tripped()) {

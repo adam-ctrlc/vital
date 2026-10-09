@@ -6,7 +6,8 @@ pins.txt             wiring and hardware notes.
 
 src/Config.h         pins, relay polarity, timings.
 src/core/
-  Protection         the overload logic: alarm, trip, reclose, lockout. Pure C++.
+  Protection         the overload logic: alarm, trip (VA or 9.09 A, after the delay),
+                     instant trip at 90.91 A, reclose, lockout. Pure C++.
   Controller         runs Protection on its own FreeRTOS task: sensors, relay, LCD, flash.
   Settings           limits, delays and trip state saved in flash (Preferences).
   Boot               reset reason, brownout count, last relay command id (RTC memory).

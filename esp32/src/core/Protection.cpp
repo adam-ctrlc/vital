@@ -46,10 +46,19 @@ void Protection::holdOpenUntil(uint32_t until) {
   holdUntil_ = until;
 }
 
-void Protection::update(float va, float tempC, uint32_t now) {
+void Protection::update(float va, float amps, float tempC, uint32_t now) {
+  if (!std::isnan(amps) && amps >= instantTripAmps_ && state_ != State::Tripped) {
+    trip(now);
+    lockedOut_ = true;
+    attempts_ = MAX_RECLOSE_ATTEMPTS;
+    instantTripped_ = true;
+    return;
+  }
+
   const bool haveVa = !std::isnan(va);
-  const bool overAlarm = (haveVa && va >= limits_.alarmVa) || (!std::isnan(tempC) && tempC >= limits_.tempC);
-  const bool overTrip = haveVa && va >= limits_.tripVa;
+  const bool overTrip = (haveVa && va >= limits_.tripVa) || (!std::isnan(amps) && amps >= currentTripAmps_);
+  const bool overAlarm =
+      overTrip || (haveVa && va >= limits_.alarmVa) || (!std::isnan(tempC) && tempC >= limits_.tempC);
 
   if (watchingReclose_ && state_ != State::Tripped && now - reclosedAt_ >= RECLOSE_SURVIVED_MS) {
     watchingReclose_ = false;
@@ -113,6 +122,7 @@ bool Protection::operatorClose(uint32_t now) {
   if (manualBlocked_ && !reached(now, manualBlockedUntil_)) return false;
   manualBlocked_ = false;
   lockedOut_ = false;
+  instantTripped_ = false;
   attempts_ = 0;
   watchingReclose_ = false;
   manualClose_ = true;
