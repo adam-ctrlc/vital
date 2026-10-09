@@ -203,6 +203,9 @@ export default function DashboardScreen() {
             voltageColor={ac}
             currentColor={amber}
             dangerColor={danger}
+            temperatureC={data?.temperatureC}
+            tempLimitC={data?.tempThresholdC}
+            tempColors={isDark ? { cool: '#4ade80', warm: '#facc15' } : { cool: '#22c55e', warm: '#eab308' }}
           />
         </CardContent>
       </Card>

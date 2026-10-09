@@ -30,9 +30,14 @@ type AcWaveformProps = {
   currentColor: string;
   dangerColor: string;
   gridColor?: string;
+  /** Drawn as a slower dashed wave that reaches the limit lines at the temperature limit. */
+  temperatureC?: number | null;
+  tempLimitC?: number | null;
+  /** Green when cool, yellow in the middle; red (the danger colour) at the limit. */
+  tempColors?: { cool: string; warm: string };
 };
 
-type Shape = { vAmp: number; iAmp: number; lag: number; load: number };
+type Shape = { vAmp: number; iAmp: number; lag: number; load: number; tAmp: number; tRatio: number };
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -40,10 +45,12 @@ function clamp(value: number, min: number, max: number) {
 
 /** What the readings ask the wave to look like. */
 function targetShape(props: AcWaveformProps): Shape {
-  if (!props.energized) return { vAmp: 0.02, iAmp: 0.02, lag: 0, load: 0 };
+  if (!props.energized) return { vAmp: 0.02, iAmp: 0.02, lag: 0, load: 0, tAmp: 0.02, tRatio: 0 };
 
   const load = clamp(props.loadRatio ?? 0, 0, 1.4);
   const volts = props.voltageV ?? NOMINAL_V;
+  const tRatio =
+    props.temperatureC != null && props.tempLimitC ? clamp(props.temperatureC / props.tempLimitC, 0, 1.3) : 0;
 
   return {
     vAmp: clamp(0.82 * (volts / NOMINAL_V), 0.5, 0.92),
@@ -53,17 +60,27 @@ function targetShape(props: AcWaveformProps): Shape {
     // Current lags voltage by the power-factor angle, as with an inductive load.
     lag: Math.acos(clamp(props.powerFactor ?? 0.95, 0, 1)),
     load,
+    // Like the current: a small wave when cool, at the limit lines at the temperature limit.
+    tAmp: clamp(MIN_CURRENT_AMP + (LIMIT_AMP - MIN_CURRENT_AMP) * tRatio, MIN_CURRENT_AMP, 0.95),
+    tRatio,
   };
 }
 
-function sinePath(width: number, mid: number, amp: number, phase: number) {
+function sinePath(width: number, mid: number, amp: number, phase: number, periods = PERIODS) {
   let d = '';
   for (let i = 0; i <= STEPS; i++) {
     const x = (width * i) / STEPS;
-    const y = mid - amp * Math.sin((2 * Math.PI * PERIODS * i) / STEPS + phase);
+    const y = mid - amp * Math.sin((2 * Math.PI * periods * i) / STEPS + phase);
     d += `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)} `;
   }
   return d;
+}
+
+/** Green up to 60% of the limit, yellow by 85%, red at the limit and above. */
+function temperatureColor(ratio: number, colors: { cool: string; warm: string }, hot: string) {
+  if (ratio <= 0.6) return colors.cool;
+  if (ratio <= 0.85) return mix(colors.cool, colors.warm, (ratio - 0.6) / 0.25);
+  return mix(colors.warm, hot, clamp((ratio - 0.85) / 0.15, 0, 1));
 }
 
 /** Blends two #rrggbb colours. */
@@ -96,6 +113,8 @@ export function AcWaveform(props: AcWaveformProps) {
   const voltageLine = useRef<SVGPathElement>(null);
   const currentGlow = useRef<SVGPathElement>(null);
   const currentLine = useRef<SVGPathElement>(null);
+  const tempGlow = useRef<SVGPathElement>(null);
+  const tempLine = useRef<SVGPathElement>(null);
 
   // The latest props for the frame loop, without restarting it on every reading.
   const latest = useRef(props);
@@ -122,7 +141,7 @@ export function AcWaveform(props: AcWaveformProps) {
     const mid = height / 2;
     const half = height / 2;
     // Starts flat and grows into the first reading.
-    const shape: Shape = { vAmp: 0.02, iAmp: 0.02, lag: 0, load: 0 };
+    const shape: Shape = { vAmp: 0.02, iAmp: 0.02, lag: 0, load: 0, tAmp: 0.02, tRatio: 0 };
     let phase = 0;
     let last = performance.now();
     let frame = 0;
@@ -137,12 +156,14 @@ export function AcWaveform(props: AcWaveformProps) {
       shape.iAmp += (target.iAmp - shape.iAmp) * k;
       shape.lag += (target.lag - shape.lag) * k;
       shape.load += (target.load - shape.load) * k;
+      shape.tAmp += (target.tAmp - shape.tAmp) * k;
+      shape.tRatio += (target.tRatio - shape.tRatio) * k;
 
       // Runs regardless of reduced motion, because the motion is the reading; the pause
       // button is the way to stop it.
       if (playing.current) phase += (2 * Math.PI * dt) / PERIOD_MS;
 
-      const { voltageColor, currentColor, dangerColor, overload } = latest.current;
+      const { voltageColor, currentColor, dangerColor, overload, tempColors } = latest.current;
       // Warms from the current colour to the danger colour over the last 15% to the alarm.
       const heat = overload ? 1 : clamp((shape.load - 0.85) / 0.15, 0, 1);
       const iColor = mix(currentColor, dangerColor, heat);
@@ -156,6 +177,22 @@ export function AcWaveform(props: AcWaveformProps) {
       voltageLine.current?.setAttribute('d', vPath);
       currentGlow.current?.setAttribute('d', iPath);
       currentLine.current?.setAttribute('d', iPath);
+      // Half the speed and half the cycles of the others, so it reads as its own trace.
+      // Otherwise it behaves like the current: taller, thicker and glowing as it heats,
+      // and breathing once it is over the limit.
+      if (tempColors) {
+        const tPath = sinePath(width, mid, half * shape.tAmp, phase / 2, PERIODS / 2);
+        const tColor = temperatureColor(shape.tRatio, tempColors, dangerColor);
+        const tHeat = Math.min(shape.tRatio, 1.2);
+        const tPulse = shape.tRatio >= 1 ? 0.5 + 0.5 * Math.sin(now / 160) : 0;
+        for (const path of [tempGlow.current, tempLine.current]) {
+          path?.setAttribute('d', tPath);
+          path?.setAttribute('stroke', tColor);
+        }
+        tempLine.current?.setAttribute('stroke-width', (1.5 + 2.5 * tHeat).toFixed(2));
+        tempGlow.current?.setAttribute('stroke-width', (4 + 12 * tHeat + 6 * tPulse).toFixed(2));
+        tempGlow.current?.setAttribute('stroke-opacity', (0.08 + 0.18 * Math.min(shape.tRatio, 1) + 0.2 * tPulse).toFixed(3));
+      }
 
       voltageGlow.current?.setAttribute('stroke', voltageColor);
       voltageLine.current?.setAttribute('stroke', voltageColor);
@@ -178,6 +215,11 @@ export function AcWaveform(props: AcWaveformProps) {
   const legendCurrent = props.overload
     ? props.dangerColor
     : mix(props.currentColor, props.dangerColor, clamp(((props.loadRatio ?? 0) - 0.85) / 0.15, 0, 1));
+  const legendTemp = props.tempColors
+    ? props.temperatureC != null && props.tempLimitC
+      ? temperatureColor(props.temperatureC / props.tempLimitC, props.tempColors, props.dangerColor)
+      : props.tempColors.cool
+    : null;
   const limitTop = height / 2 - (height / 2) * LIMIT_AMP;
   const limitBottom = height / 2 + (height / 2) * LIMIT_AMP;
 
@@ -197,6 +239,12 @@ export function AcWaveform(props: AcWaveformProps) {
           <path ref={voltageGlow} fill="none" strokeOpacity={0.16} strokeWidth={9} strokeLinecap="round" strokeLinejoin="round" />
           <path ref={voltageLine} fill="none" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
           <path ref={currentLine} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          {props.tempColors ? (
+            <>
+              <path ref={tempGlow} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              <path ref={tempLine} fill="none" strokeDasharray="6 5" strokeLinecap="round" />
+            </>
+          ) : null}
         </svg>
       ) : null}
 
@@ -209,6 +257,14 @@ export function AcWaveform(props: AcWaveformProps) {
           <span className="h-0.5 w-3 rounded-full" style={{ backgroundColor: legendCurrent }} />
           Current
         </span>
+        {legendTemp ? (
+          <span className="flex items-center gap-1">
+            <svg width={14} height={2} aria-hidden="true">
+              <line x1={0} y1={1} x2={14} y2={1} stroke={legendTemp} strokeWidth={2} strokeDasharray="4 3" />
+            </svg>
+            {props.temperatureC == null ? 'Temperature' : `${props.temperatureC.toFixed(1)} °C`}
+          </span>
+        ) : null}
       </div>
     </div>
   );
