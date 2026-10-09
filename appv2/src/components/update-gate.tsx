@@ -1,5 +1,5 @@
 import { App } from '@capacitor/app';
-import { ArrowsClockwiseIcon, DownloadSimpleIcon } from '@phosphor-icons/react';
+import { DownloadSimpleIcon } from '@phosphor-icons/react';
 import { useEffect, useSyncExternalStore, type ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -14,10 +14,10 @@ import { getUpdateState, isUpdateRequired, subscribeUpdates, type UpdateState } 
 import { installUpdate, openApkDownload } from '@/lib/updates/updater';
 
 /**
- * Updates are required: while one is waiting, this replaces the whole app. The ways forward
- * are Update now (download inside the app, then restart), Download (a new APK, when Android
- * itself changed) or, on the website, Reload. Offline no check succeeds, so nothing is ever
- * waiting and the app works as usual.
+ * Updates are required in the Android app: while one is waiting, this replaces the whole
+ * app. The ways forward are Update now (download inside the app, then restart) or Download
+ * (a new APK, when Android itself changed). The website never shows it; it reloads itself.
+ * Offline no check succeeds, so nothing is ever waiting and the app works as usual.
  */
 export function UpdateGate({ children }: { children: ReactNode }) {
   const state = useSyncExternalStore(subscribeUpdates, getUpdateState);
@@ -58,18 +58,16 @@ function parseNotes(notes: string): { headline: string; bullets: string[] } {
   };
 }
 
-function UpdateRequired({ state: { bundle, apk, web } }: { state: UpdateState }) {
+function UpdateRequired({ state: { bundle, apk } }: { state: UpdateState }) {
   const { primary } = useAppearance();
-  const target = bundle?.version ?? apk?.versionName ?? web?.version ?? '';
+  const target = bundle?.version ?? apk?.versionName ?? '';
   const { headline, bullets } = parseNotes(bundle?.notes ?? apk?.notes ?? '');
   const busy = bundle?.phase === 'downloading' || bundle?.phase === 'installing';
   const percent = Math.round(bundle?.percent ?? 0);
 
   const lead = bundle
     ? 'A new version of VITAL is ready. It downloads inside the app; your account and settings are kept.'
-    : apk
-      ? 'A new version of the VITAL app is out. Download it and install it over this one.'
-      : 'A new version of VITAL has been released. Reload to continue.';
+    : 'A new version of the VITAL app is out. Download it and install it over this one.';
 
   return (
     <div className="bg-background flex min-h-dvh flex-col">
@@ -178,12 +176,7 @@ function UpdateRequired({ state: { bundle, apk, web } }: { state: UpdateState })
               <DownloadSimpleIcon weight="bold" aria-hidden="true" />
               Download
             </Button>
-          ) : (
-            <Button size="lg" className="w-full" onClick={() => window.location.reload()}>
-              <ArrowsClockwiseIcon weight="bold" aria-hidden="true" />
-              Reload
-            </Button>
-          )}
+          ) : null}
 
           {apk && !bundle ? (
             <p className="text-muted-foreground text-center text-xs">

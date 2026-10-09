@@ -8,11 +8,9 @@ export type UpdateState = {
   bundle: BundleUpdate | null;
   /** A new APK, needed only for native changes; it opens in the phone's browser. */
   apk: { versionName: string; url: string; notes: string } | null;
-  /** Website only: a newer build is deployed and the page should reload. */
-  web: { version: string } | null;
 };
 
-let state: UpdateState = { bundle: null, apk: null, web: null };
+let state: UpdateState = { bundle: null, apk: null };
 const listeners = new Set<() => void>();
 
 export function getUpdateState(): UpdateState {
@@ -21,7 +19,7 @@ export function getUpdateState(): UpdateState {
 
 /** Whether an update is waiting, which is when the update screen replaces the app. */
 export function isUpdateRequired(current: UpdateState = state): boolean {
-  return current.bundle !== null || current.apk !== null || current.web !== null;
+  return current.bundle !== null || current.apk !== null;
 }
 
 export function subscribeUpdates(listener: () => void): () => void {

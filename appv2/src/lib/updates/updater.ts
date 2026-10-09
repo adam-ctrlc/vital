@@ -128,10 +128,39 @@ async function checkWeb(): Promise<void> {
     const res = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) return;
     const { version } = (await res.json()) as { version?: string };
-    if (version && compareVersions(version, APP_VERSION) > 0) setUpdateState({ web: { version } });
+    if (version && compareVersions(version, APP_VERSION) > 0) reloadInto(version);
   } catch {
     // offline: try again on the next visit
   }
+}
+
+const RELOADED_FOR_KEY = 'vital.reloaded-for';
+
+/**
+ * The website has nothing to install, so it loads the new version itself rather than
+ * asking. It waits while someone is typing, so a half-filled form is not thrown away, and
+ * reloads once per version: if a stale cache still serves the old page, it stops there
+ * instead of reloading forever.
+ */
+function reloadInto(version: string): void {
+  try {
+    if (sessionStorage.getItem(RELOADED_FOR_KEY) === version) return;
+  } catch {
+    // storage blocked: still reload, just without the loop guard
+  }
+
+  const typing = document.activeElement?.matches('input, textarea, select, [contenteditable="true"]');
+  if (typing) {
+    document.addEventListener('focusout', () => setTimeout(() => reloadInto(version), 0), { once: true });
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(RELOADED_FOR_KEY, version);
+  } catch {
+    // see above
+  }
+  window.location.reload();
 }
 
 /** Dev only: open any page with ?previewUpdate to see the update screen in a browser. */
