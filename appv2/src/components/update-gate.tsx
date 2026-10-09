@@ -186,11 +186,6 @@ function UpdateRequired({ state: { bundle, apk, web } }: { state: UpdateState })
             </Button>
           )}
 
-          {bundle && apk && !busy ? (
-            <Button variant="outline" className="w-full" onClick={() => openApkDownload(apk.url)}>
-              Also download app version {apk.versionName}
-            </Button>
-          ) : null}
           {apk && !bundle ? (
             <p className="text-muted-foreground text-center text-xs">
               Your browser downloads the app. Open the file to install it.

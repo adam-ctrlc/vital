@@ -99,12 +99,14 @@ export function compareVersions(a: string, b: string): number {
 export type UpdatePlan = { bundle: BundleRelease | null; apk: ApkRelease | null };
 
 /**
- * A newer APK is offered whenever one exists. A newer bundle is only downloaded when the
- * installed APK can run it; otherwise the APK is the only way forward.
+ * An update installs inside the app whenever the installed APK can run it, and then that is
+ * the only thing offered: a newer APK on top would send people to a download they do not
+ * need. The APK is offered only when the new bundle requires it (the installed build is
+ * older than `minNative`), because then it is the only way forward.
  */
 export function planUpdate(manifest: UpdateManifest, runningVersion: string, nativeBuild: number): UpdatePlan {
-  const apk = manifest.apk.versionCode > nativeBuild ? manifest.apk : null;
   const fits = manifest.minNative <= nativeBuild;
   const newer = VERSION.test(runningVersion) ? compareVersions(manifest.version, runningVersion) > 0 : false;
-  return { bundle: fits && newer ? manifest.bundle : null, apk };
+  const apkRequired = !fits && manifest.apk.versionCode > nativeBuild;
+  return { bundle: fits && newer ? manifest.bundle : null, apk: apkRequired ? manifest.apk : null };
 }
