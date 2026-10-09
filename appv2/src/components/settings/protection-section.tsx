@@ -46,7 +46,7 @@ const DELAYS: Record<
 > = {
   trip: {
     title: 'Trip delay',
-    hint: 'How long an overload must last before the relay opens.',
+    hint: 'How long an overload (over the trip threshold or 9.09 A) must last before the relay opens. At 90.91 A or more it opens at once.',
     min: TRIP_MIN_SECONDS,
     max: TRIP_MAX_SECONDS,
     step: TRIP_STEP_SECONDS,

@@ -138,9 +138,14 @@ function UsageTab({ isAdmin, colors }: { isAdmin: boolean; colors: Colors }) {
           a window to shed load themselves before the board does it for them.
         </p>
         <IconItem icon={PlugsConnectedIcon} color={amber} title="When the load is cut">
-          The load has to stay above the trip level for the trip delay first (3 seconds unless
-          changed in Settings), so a motor starting up cannot cut the supply. A shorter delay
-          cuts a real fault sooner; a longer one rides out a brief surge.
+          The load has to stay above the trip level, or at 9.09 A or more, for the trip delay
+          first (2 seconds unless changed in Settings), so a motor starting up cannot cut the supply. A shorter delay
+          cuts a real fault sooner; a longer one rides out a brief surge. An admin can switch it
+          back on from Settings.
+        </IconItem>
+        <IconItem icon={PlugsConnectedIcon} color={amber} title="Instant trip">
+          At 90.91 A or more the relay opens at once, with no delay, and stays off until an admin
+          switches it back on. If the current is still that high, it opens again within a second.
         </IconItem>
         <IconItem icon={PlugsConnectedIcon} color={ac} title="When it comes back">
           Once the load is back under the alarm level and the reclose delay has passed (30
