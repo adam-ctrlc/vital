@@ -22,8 +22,59 @@ pub struct HistoryQuery {
     pub source: Option<String>,
     /// Free-text search over status, source, power and the local timestamp.
     pub q: Option<String>,
+    /// Inclusive lower bound on `recorded_at`, as an RFC 3339 instant.
+    pub from: Option<String>,
+    /// Exclusive upper bound on `recorded_at`, as an RFC 3339 instant.
+    pub to: Option<String>,
+    /// Apparent power at or above this, in VA.
+    pub min_va: Option<f64>,
+    /// Apparent power at or below this, in VA.
+    pub max_va: Option<f64>,
+    /// Temperature at or above this, in degrees Celsius.
+    pub min_temp_c: Option<f64>,
+    /// 'newest' (the default), 'oldest', 'load' or 'temperature'.
+    pub sort: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+/// An instant from the query string, rewritten into the exact shape `recorded_at` is
+/// stored in, so the bound compares as text in the same order as time.
+fn instant(name: &str, value: Option<String>) -> AppResult<Option<String>> {
+    filter(value)
+        .map(|raw| {
+            chrono::DateTime::parse_from_rfc3339(&raw)
+                .map(|at| {
+                    at.with_timezone(&chrono::Utc)
+                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                        .to_string()
+                })
+                .map_err(|_| {
+                    AppError::BadRequest(format!("invalid {name}: expected an RFC 3339 instant"))
+                })
+        })
+        .transpose()
+}
+
+/// A numeric bound, refused when it is not a finite number.
+fn bound(name: &str, value: Option<f64>) -> AppResult<Option<f64>> {
+    match value {
+        Some(number) if !number.is_finite() => Err(AppError::BadRequest(format!("invalid {name}"))),
+        other => Ok(other),
+    }
+}
+
+/// The ORDER BY for a sort key. A fixed list, because the clause cannot be a bound
+/// parameter and must never be built from the request. Ties fall back to newest first,
+/// and readings missing the sorted value go last rather than first.
+fn order_by(sort: Option<&str>) -> AppResult<&'static str> {
+    match sort.unwrap_or("newest") {
+        "newest" => Ok("recorded_at desc"),
+        "oldest" => Ok("recorded_at asc"),
+        "load" => Ok("apparent_power_va is null, apparent_power_va desc, recorded_at desc"),
+        "temperature" => Ok("temperature_c is null, temperature_c desc, recorded_at desc"),
+        other => Err(AppError::BadRequest(format!("invalid sort: {other}"))),
+    }
 }
 
 const DEFAULT_LIMIT: i64 = 20;
@@ -95,7 +146,12 @@ const HISTORY_FILTER: &str = "(?1 is null or status = ?1)
                like '%' || ?2 || '%' escape '\\'
             or strftime('%Y-%m-%d %H:%M', recorded_at, '+8 hours')
                like '%' || ?2 || '%' escape '\\')
-       and (?3 is null or source = ?3)";
+       and (?3 is null or source = ?3)
+       and (?4 is null or recorded_at >= ?4)
+       and (?5 is null or recorded_at < ?5)
+       and (?6 is null or apparent_power_va >= ?6)
+       and (?7 is null or apparent_power_va <= ?7)
+       and (?8 is null or temperature_c >= ?8)";
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -181,6 +237,25 @@ async fn history(
     let source = filter(query.source);
     let q = filter(query.q).map(|needle| search::escape_like(&needle));
 
+    let from = instant("from", query.from)?;
+    let to = instant("to", query.to)?;
+    let min_va = bound("minVa", query.min_va)?;
+    let max_va = bound("maxVa", query.max_va)?;
+    let min_temp_c = bound("minTempC", query.min_temp_c)?;
+    let sort = filter(query.sort);
+    let order = order_by(sort.as_deref())?;
+
+    if let (Some(min), Some(max)) = (min_va, max_va)
+        && min > max
+    {
+        return Err(AppError::BadRequest("minVa is above maxVa".to_owned()));
+    }
+    if let (Some(from), Some(to)) = (from.as_deref(), to.as_deref())
+        && from >= to
+    {
+        return Err(AppError::BadRequest("from is not before to".to_owned()));
+    }
+
     if let Some(status) = status.as_deref() {
         status.parse::<Status>()?;
     }
@@ -197,7 +272,16 @@ async fn history(
     let mut counted = conn
         .query(
             &format!("select count(*) from readings where {HISTORY_FILTER}"),
-            params![status.clone(), q.clone(), source.clone()],
+            params![
+                status.clone(),
+                q.clone(),
+                source.clone(),
+                from.clone(),
+                to.clone(),
+                min_va,
+                max_va,
+                min_temp_c
+            ],
         )
         .await?;
     let total: i64 = counted
@@ -214,11 +298,13 @@ async fn history(
             &format!(
                 "select {} from readings
                  where {HISTORY_FILTER}
-                 order by recorded_at desc
-                 limit ?4 offset ?5",
+                 order by {order}
+                 limit ?9 offset ?10",
                 Reading::COLUMNS
             ),
-            params![status, q, source, limit, offset],
+            params![
+                status, q, source, from, to, min_va, max_va, min_temp_c, limit, offset
+            ],
         )
         .await?;
 
@@ -267,7 +353,9 @@ async fn trend(
 
 #[cfg(test)]
 mod tests {
-    use super::{CURRENT_RANGE, TEMPERATURE_RANGE, VOLTAGE_RANGE, in_range};
+    use super::{
+        CURRENT_RANGE, TEMPERATURE_RANGE, VOLTAGE_RANGE, bound, in_range, instant, order_by,
+    };
 
     #[test]
     fn an_absent_measurement_is_always_accepted() {
@@ -307,5 +395,36 @@ mod tests {
     fn a_non_finite_measurement_is_rejected() {
         assert!(in_range(Some(f64::NAN), VOLTAGE_RANGE, "voltage").is_err());
         assert!(in_range(Some(f64::INFINITY), VOLTAGE_RANGE, "voltage").is_err());
+    }
+
+    #[test]
+    fn an_instant_is_rewritten_in_the_stored_shape() {
+        let at = instant("from", Some("2026-10-09T00:00:00+08:00".to_owned())).unwrap();
+        assert_eq!(at.as_deref(), Some("2026-10-08T16:00:00.000Z"));
+    }
+
+    #[test]
+    fn a_blank_or_malformed_instant_is_handled() {
+        assert_eq!(instant("from", Some("  ".to_owned())).unwrap(), None);
+        assert!(instant("from", Some("yesterday".to_owned())).is_err());
+    }
+
+    #[test]
+    fn only_known_sorts_reach_the_query() {
+        assert_eq!(order_by(None).unwrap(), "recorded_at desc");
+        assert_eq!(order_by(Some("oldest")).unwrap(), "recorded_at asc");
+        assert!(
+            order_by(Some("load"))
+                .unwrap()
+                .starts_with("apparent_power_va is null")
+        );
+        assert!(order_by(Some("recorded_at; drop table readings")).is_err());
+    }
+
+    #[test]
+    fn a_non_finite_bound_is_rejected() {
+        assert!(bound("minVa", Some(f64::NAN)).is_err());
+        assert_eq!(bound("minVa", Some(700.0)).unwrap(), Some(700.0));
+        assert_eq!(bound("minVa", None).unwrap(), None);
     }
 }
