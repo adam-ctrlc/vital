@@ -185,9 +185,20 @@ const OVER_TINT = 'linear-gradient(hsl(var(--destructive) / 0.05), hsl(var(--des
 
 const SOURCE_LABEL: Record<string, string> = { hardware: 'Sensor', simulator: 'Simulated' };
 
+/** A limit that was not kept for older records. Quieter than "No data", which means a sensor. */
+const NOT_RECORDED = '—';
+
 /** Every field a record carries, as table columns after Time. */
-const COLUMNS: { label: string; align: 'left' | 'right'; value: (row: Reading) => string }[] = [
+const COLUMNS: { label: string; align: 'left' | 'right'; value: (row: Reading) => string; hint?: string }[] = [
   { label: 'VA', align: 'right', value: (row) => formatValue(row.apparentPowerVa, 0) },
+  // The alarm the row was judged against, so an old overload still reads correctly after
+  // the limit is moved. Records from before it was kept show a dash, not a guess.
+  {
+    label: 'Alarm',
+    align: 'right',
+    value: (row) => (row.loadThresholdVa == null ? NOT_RECORDED : row.loadThresholdVa.toFixed(0)),
+    hint: 'Alarm level in VA when this was recorded',
+  },
   { label: 'Status', align: 'left', value: (row) => (row.status === 'overload' ? 'Overload' : 'Normal') },
   { label: 'V', align: 'right', value: (row) => formatValue(row.voltageV, 1) },
   { label: 'A', align: 'right', value: (row) => formatValue(row.currentA, 2) },
@@ -433,7 +444,7 @@ export default function LogsScreen() {
         <Card className="gap-0 overflow-hidden py-0">
           {/* Scrolls sideways on a phone; Time stays pinned so a row is never anonymous. */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-xs tabular-nums">
+            <table className="w-full min-w-[780px] text-xs tabular-nums">
               <thead className="text-muted-foreground text-[11px]">
                 <tr className="bg-muted border-b">
                   <th scope="col" className="bg-muted sticky left-0 z-10 px-4 py-2.5 text-left font-medium">
@@ -443,6 +454,7 @@ export default function LogsScreen() {
                     <th
                       key={column.label}
                       scope="col"
+                      title={column.hint}
                       className={cn('px-3 py-2.5 font-medium', column.align === 'left' ? 'text-left' : 'text-right')}>
                       {column.label}
                     </th>

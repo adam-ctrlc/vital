@@ -57,6 +57,13 @@ export type Reading = MeterFields & {
   apparentPowerVa: number | null;
   status: Status;
   source: string;
+  /**
+   * The limits in force when this was recorded; status was judged against the alarm.
+   * Null for records from before they were kept.
+   */
+  loadThresholdVa?: number | null;
+  tripThresholdVa?: number | null;
+  tempThresholdC?: number | null;
   recordedAt: string;
 };
 
