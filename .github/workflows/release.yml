@@ -1,0 +1,79 @@
+# Builds and signs a new APK and publishes it with a live update (appv2/scripts/release.mjs).
+# Started by `pnpm release:apk --notes "…"` (or from the Actions tab). Live updates without a
+# new APK don't need this: `pnpm release --notes "…"` runs on your computer.
+#
+# Secrets: RELEASES_TOKEN (fine-grained PAT, Contents read/write on adam-ctrlc/vital-releases),
+#          ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Variable: VITE_API_URL, the deployed API the app talks to.
+name: Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: What changed (shown on the app's update screen)
+        required: true
+      needs_new_apk:
+        description: The new app code won't run on older APKs
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # commits the version bump back to master
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check release secrets
+        env:
+          HAS_TOKEN: ${{ secrets.RELEASES_TOKEN != '' }}
+          HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+          HAS_API: ${{ vars.VITE_API_URL != '' }}
+        run: |
+          [ "$HAS_TOKEN" = "true" ] || { echo "::error::Missing secret RELEASES_TOKEN"; exit 1; }
+          [ "$HAS_KEYSTORE" = "true" ] || { echo "::error::Missing secret ANDROID_KEYSTORE_BASE64"; exit 1; }
+          [ "$HAS_API" = "true" ] || { echo "::error::Missing variable VITE_API_URL"; exit 1; }
+
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: appv2/package.json
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: appv2/pnpm-lock.yaml
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      # The Android SDK is preinstalled on GitHub's Ubuntu runners (ANDROID_HOME).
+
+      - name: Build, sign and publish
+        working-directory: appv2
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          NOTES: ${{ inputs.notes }}
+          NEEDS_NEW_APK: ${{ inputs.needs_new_apk }}
+        run: |
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
+          pnpm install --frozen-lockfile
+          extra=()
+          [ "$NEEDS_NEW_APK" = "true" ] && extra+=(--needs-new-apk)
+          node scripts/release.mjs --apk --notes "$NOTES" "${extra[@]}"
+
+      - name: Commit the new version number
+        run: |
+          version=$(node -p "require('./appv2/package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add appv2/package.json
+          git commit -m "Release v$version" && git push || echo "version already committed"
