@@ -1,0 +1,17 @@
+node_modules
+dist
+.env
+*.local
+android/app/build
+android/build
+android/.gradle
+android/local.properties
+
+# Staging for scripts/release.mjs
+release/
+
+# Vercel CLI link and build output
+.vercel
+.env*
+!.env.example
+*.tsbuildinfo

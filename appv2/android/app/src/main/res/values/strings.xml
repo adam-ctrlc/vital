@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Vital</string>
+    <string name="title_activity_main">Vital</string>
+    <string name="package_name">com.peregrineadrift.vital</string>
+    <string name="custom_url_scheme">com.peregrineadrift.vital</string>
+</resources>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" type="image/png" href="/images/favicon.png" />
+    <title>Vital</title>
+    <!-- The saved light/dark choice, applied before anything is drawn so the first paint
+         is already in the right colours. Falls back to the device setting. -->
+    <script>
+      try {
+        var saved = localStorage.getItem('CapacitorStorage.dynavolt.theme');
+        var dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', dark);
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) {}
+    </script>
+    <!-- The first paint, before any script runs: the same loading screen the app shows
+         (src/components/app-loading.tsx), so startup never flashes a blank page. -->
+    <style>
+      /* No browser margin: the page's own styles load after this first paint, and until
+         they do the default 8px would frame the loading screen in white. */
+      html, body { margin: 0; background: #fff; }
+      html.dark, html.dark body { background: #0a0a0a; }
+      .boot { min-height: 100dvh; display: grid; place-items: center; background: #fff; color: #0a0a0a;
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+      .boot-inner { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+      .boot img { width: 64px; height: 64px; border-radius: 16px; animation: boot-logo 1.6s ease-in-out infinite; }
+      .boot-name { font-size: 18px; font-weight: 600; letter-spacing: 0.04em; }
+      .boot-text { font-size: 14px; color: #71717a; margin-top: 4px; text-align: center; }
+      .boot-track { width: 160px; height: 4px; border-radius: 9999px; background: #f4f4f5; overflow: hidden; }
+      .boot-bar { width: 33%; height: 100%; border-radius: 9999px; background: #3b82f6; animation: boot-bar 1.1s ease-in-out infinite; }
+      @keyframes boot-bar { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+      @keyframes boot-logo { 50% { transform: scale(1.04); } }
+      html.dark .boot { background: #0a0a0a; color: #fafafa; }
+      html.dark .boot-text { color: #a1a1aa; }
+      html.dark .boot-track { background: #262626; }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot" role="status" aria-live="polite">
+        <div class="boot-inner">
+          <img src="/images/favicon.png" alt="" />
+          <div>
+            <div class="boot-name">VITAL</div>
+            <div class="boot-text">Loading…</div>
+          </div>
+          <div class="boot-track" aria-hidden="true"><div class="boot-bar"></div></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

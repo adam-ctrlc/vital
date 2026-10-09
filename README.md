@@ -2,7 +2,7 @@
 
 A Transformer Alert Management System for a 1 KVA distribution transformer, built as an electrical engineering thesis project at PHINMA Cagayan de Oro College, Carmen Campus.
 
-An ESP32 measures the transformer and reports it to a Rust API, which stores every sample, raises alerts when a reading crosses a threshold, and serves live readings to an Expo app. The board also protects the transformer itself, opening a relay when the load runs away. The API can simulate the transformer from the clock, so the whole system can be demonstrated end to end with or without the hardware wired in.
+An ESP32 measures the transformer and reports it to a Rust API, which stores every sample, raises alerts when a reading crosses a threshold, and serves live readings to a web app that also ships as an Android app through Capacitor. The board also protects the transformer itself, opening a relay when the load runs away. The API can simulate the transformer from the clock, so the whole system can be demonstrated end to end with or without the hardware wired in.
 
 ## What it does
 
@@ -26,7 +26,8 @@ An ESP32 measures the transformer and reports it to a Rust API, which stores eve
 ```
 ESP32  ──POST /readings + /device/heartbeat──>  Rust API  ──>  Turso (libSQL)
    (x-device-key)                                  │
-Expo app  ──polls, bearer token───────────────────┘
+Web app   ──polls, bearer token───────────────────┘
+(browser or Android, via Capacitor)
 ```
 
 The API is stateless. Serverless functions cannot keep a background loop alive, so in simulation mode readings are a pure function of the clock, and a sample is persisted only when the newest stored row is older than `SAMPLE_INTERVAL_MS`. In hardware mode the ESP32 pushes readings and the API serves the latest one while it stays fresh.
@@ -35,7 +36,7 @@ The API is stateless. Serverless functions cannot keep a background loop alive, 
 
 **API** Rust, Axum 0.8, libsql against Turso (SQLite over HTTP), JWT (HS256) auth, argon2 password hashing. Deployed to Vercel in the `hnd1` region, which is where the database is: every query is an HTTP request, so the two being in different countries cost about seventy milliseconds each way, every time.
 
-**App** Expo SDK 54, Expo Router, React Native 0.81, NativeWind (Tailwind), React Native Reusables, react-native-reanimated and react-native-svg for the waveform and charts, Phosphor icons, KaTeX pre-rendered offline for the formulas.
+**App** Vite, React 19, TypeScript, React Router, Tailwind, Phosphor icons and KaTeX, packaged for Android with Capacitor 8. It is a 1:1 port of the original Expo app, which has been retired.
 
 **Firmware** ESP32 reading a PZEM-004T v3 energy meter and a DS18B20 contact temperature probe, tripping a relay, and driving a 20x4 I2C LCD. Header-only C++ with one class per component, ArduinoJson for every payload it builds or reads.
 
@@ -47,10 +48,11 @@ api/            Rust API
   schema.sql    the whole schema, applied by `cargo run --bin migrate`
   scripts/      pg-to-turso.mjs, the one-off data copy
   api/index.rs  Vercel serverless entrypoint
-app/            Expo application
-  src/app/      Expo Router routes; (tabs) holds the screens
+appv2/          web app, and the Android app through Capacitor (see appv2/README.md)
+  src/routes/   screens; tabs/ holds the tab group
   src/features/ API clients and types, split by domain
   src/components/
+  android/      the Capacitor Android project
 esp32/          firmware (see esp32/structure.txt and esp32/pins.txt)
   esp32.ino     mode selector: REAL_MODE, plus DS18B20 / LCD / PZEM / backend tests
   src/          config, hardware, net, core, tests (header-only classes)
@@ -135,19 +137,19 @@ Further accounts can be created and edited from the app by an admin. Sign in wit
 
 ### App
 
-Create `app/.env`:
+Create `appv2/.env`:
 
 ```
-EXPO_PUBLIC_API_URL=http://localhost:8080/api/v1
+VITE_API_URL=http://localhost:8080/api/v1
 ```
 
 ```bash
-cd app
+cd appv2
 pnpm install
-pnpm expo start
+pnpm dev
 ```
 
-Open it in Expo Go (SDK 54), or build a standalone APK with EAS (`eas build -p android --profile preview`) for the real app icon and push notifications. The bundled alert tones need a build too: the Expo config plugin copies them into the Android resources at prebuild, so in Expo Go they can be previewed but will not play once the app is closed. A phone cannot reach `localhost`, so point `EXPO_PUBLIC_API_URL` at your machine's LAN address or a deployed API.
+The site runs at http://localhost:5173. For the Android app, `pnpm apk` builds the site, syncs it into `android/` and assembles a debug APK; it needs JDK 21 and the Android SDK. The API URL is baked in at build time, and a phone cannot reach `localhost`, so build the APK against your machine's LAN address or a deployed API.
 
 ### Firmware
 
@@ -247,7 +249,9 @@ That has a consequence worth stating plainly, because the two look identical unt
 
 Because a remote push is composed on the server, the chosen channel travels with the push token and is re-registered whenever the tone changes. A push naming no channel lands on the default one, which is the old behavior and what an iOS device or an older client still gets.
 
-The tones are generated, not shipped as recordings: `app/scripts/build-alert-sounds.mjs` synthesizes all thirty as WAV files from sine, square, noise and struck-bell primitives. They sit between roughly 1 and 3 kHz, which is where a phone speaker is loudest and where a tone still carries across a room with a transformer humming in it. Regenerating is deterministic, so the files do not churn in every commit.
+**Remote push is currently off.** The API sends through Expo's push service, which only accepts tokens from an Expo app; the Capacitor app gets Firebase (FCM) tokens instead. Until the API sends through FCM, alerts notify while the app is open or in the background, but not once it has been closed.
+
+The tones are generated, not shipped as recordings: `appv2/scripts/build-alert-sounds.mjs` synthesizes all thirty as WAV files from sine, square, noise and struck-bell primitives. They sit between roughly 1 and 3 kHz, which is where a phone speaker is loudest and where a tone still carries across a room with a transformer humming in it. Regenerating is deterministic, so the files do not churn in every commit.
 
 Each one runs for **12 seconds**, the motif repeating with a breath between passes rather than being stretched. That length is not cosmetic: with the app closed, Android plays the channel's sound exactly once and will not loop it, so whatever is in the file is the entire alarm. A quarter of a second reads as a ping; this reads as something wanting attention. They are written at 22.05 kHz because the highest partial any of them carries is under 5 kHz, which halves thirty files that are now twelve seconds each.
 
@@ -271,10 +275,11 @@ Where the app can schedule notifications itself, it posts a fresh one as each to
 
 ## Scripts
 
-From `app/`:
+From `appv2/`:
 
-- `pnpm expo start` starts the development server
-- `eas build -p android --profile preview` builds an installable APK
+- `pnpm dev` starts the development server
+- `pnpm build` builds the static site into `dist/`
+- `pnpm apk` builds a debug APK; `pnpm android` opens the project in Android Studio
 - `node scripts/build-alert-sounds.mjs` regenerates the thirty alert tones
 
 From `api/`:

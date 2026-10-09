@@ -1,6 +1,6 @@
 # Repository-wide ignores.
 #
-# The per-project ignores live in api/ and app/. This file covers the root, which had
+# The per-project ignores live in api/, appv2/ and esp32/. This file covers the root, which had
 # none: anything dropped beside the three project folders was untracked and therefore
 # one `git add .` away from a public repository.
 
@@ -21,3 +21,9 @@ backups/
 
 # Windows shortcut files, which carry the machine name of whoever made them.
 *.lnk
+
+# Local credentials, such as the Vercel deploy token.
+.env.local
+
+# macOS folder metadata
+.DS_Store
