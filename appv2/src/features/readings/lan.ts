@@ -27,6 +27,19 @@ type BoardReading = {
   uptimeSeconds: number;
 };
 
+const NUMBER_FIELDS = ['voltageV', 'currentA', 'temperatureC', 'powerW', 'powerFactor', 'frequencyHz', 'energyKwh'];
+
+/** Anything else at that address (a stale IP now used by another device, an error page) is ignored. */
+function isBoardReading(value: unknown): value is BoardReading {
+  if (typeof value !== 'object' || value === null) return false;
+  const fields = value as Record<string, unknown>;
+  return (
+    NUMBER_FIELDS.every((key) => fields[key] === null || typeof fields[key] === 'number') &&
+    typeof fields.status === 'string' &&
+    typeof fields.relay === 'string'
+  );
+}
+
 /**
  * Reads the board directly, over whatever network both happen to be on.
  *
@@ -55,7 +68,7 @@ export async function readBoard(ip: string, signal?: AbortSignal): Promise<Board
       });
       if (signal?.aborted || response.status < 200 || response.status >= 300) return null;
 
-      return response.data as BoardReading;
+      return isBoardReading(response.data) ? response.data : null;
     } catch {
       return null;
     }
@@ -72,7 +85,8 @@ export async function readBoard(ip: string, signal?: AbortSignal): Promise<Board
     const response = await fetch(`http://${ip}/live`, { signal: timeout.signal });
     if (!response.ok) return null;
 
-    return (await response.json()) as BoardReading;
+    const body: unknown = await response.json();
+    return isBoardReading(body) ? body : null;
   } catch {
     // Unreachable, too slow, not a board, blocked as mixed content, or the poll was
     // cancelled. All of them mean the same thing here.
