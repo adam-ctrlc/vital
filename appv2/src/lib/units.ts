@@ -35,7 +35,7 @@ export function hourLabel(hour: number): string {
 /** 0.00041 rather than 4.1e-4: these rates are usually far below 1. */
 export function formatFactor(value: number | null): string {
   if (value === null) return 'No data';
-  return `${value >= 10 ? value.toFixed(0) : Number(value.toPrecision(2))}×`;
+  return `${value >= 10 ? value.toFixed(0) : Number(value.toPrecision(2))}\u00a0×`;
 }
 
 /** Hours of aging, with minutes or seconds when it is small. */

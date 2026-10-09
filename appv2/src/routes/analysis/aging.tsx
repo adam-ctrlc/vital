@@ -20,7 +20,7 @@ function Aging({ data }: { data: Insights }) {
     <>
       <Stats
         items={[
-          { label: 'Average aging rate', value: formatFactor(aging.avgAgingFactor), detail: '1× is normal aging' },
+          { label: 'Average aging rate', value: formatFactor(aging.avgAgingFactor), detail: '1\u00a0× is normal aging' },
           {
             label: 'Highest aging rate',
             value: formatFactor(aging.maxAgingFactor),
@@ -39,7 +39,7 @@ function Aging({ data }: { data: Insights }) {
           },
         ]}
       />
-      <Panel title="Aging rate per day" description="Hotter days age the insulation faster. 1× is normal.">
+      <Panel title="Aging rate per day" description="Hotter days age the insulation faster. 1&nbsp;× is normal.">
         <DayBars
           label="Aging rate per day"
           bars={aging.days.map((day) => ({
