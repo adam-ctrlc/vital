@@ -5,9 +5,11 @@ import { Callout, type CalloutTone } from '@/components/ui/callout';
 import { Segmented } from '@/components/ui/segmented';
 import { SettingsSection } from '@/components/ui/settings-list';
 import { Skeleton } from '@/components/ui/skeleton';
+import { isUnplannedReset, resetReasonLabel } from '@/features/device/reset-reason';
 import type { DeviceStatus } from '@/features/device/types';
 import type { SourceMode } from '@/features/settings/types';
 import { useAppearance, useColorScheme } from '@/lib/appearance';
+import { cn } from '@/lib/utils';
 
 const SOURCE_OPTIONS: { label: string; value: SourceMode }[] = [
   { label: 'Simulation', value: 'simulation' },
@@ -53,6 +55,7 @@ export function DeviceSection({
   // drops off later, and clears itself the moment the board reports again.
   const waiting = sourceMode === 'hardware' && status !== null && !connected;
 
+  const resetReason = status?.resetReason ?? null;
   const details = [
     { label: 'Device', value: status?.deviceId ?? '--' },
     { label: 'IP', value: status?.ipAddress ?? '--' },
@@ -128,6 +131,20 @@ export function DeviceSection({
               <dd className="truncate text-xs font-medium tabular-nums">{detail.value}</dd>
             </div>
           ))}
+          {/* A full row of its own: the phrase is longer than the values above it. A power
+              dip or a crash is tinted, since that one is worth chasing. */}
+          {resetReason ? (
+            <div className="col-span-full">
+              <dt className="text-muted-foreground text-[10px] uppercase tracking-wide">Last restart</dt>
+              <dd
+                className={cn(
+                  'text-xs font-medium',
+                  isUnplannedReset(resetReason) && 'text-amber-700 dark:text-amber-400'
+                )}>
+                {resetReasonLabel(resetReason)}
+              </dd>
+            </div>
+          ) : null}
         </dl>
 
         {!loading && status?.deviceId == null ? (

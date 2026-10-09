@@ -26,4 +26,6 @@ export type DeviceStatus = {
    * waits out a reclose delay.
    */
   relayClosed: boolean | null;
+  /** Why the board last restarted, as it reported it ("brownout", "panic", ...). */
+  resetReason?: string | null;
 };
