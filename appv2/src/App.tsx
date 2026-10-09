@@ -1,7 +1,8 @@
 import { App as CapacitorApp } from '@capacitor/app';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 
+import { AppLoading } from '@/components/app-loading';
 import { ConnectivityGate } from '@/components/connectivity-gate';
 import { UpdateGate } from '@/components/update-gate';
 import { AuthProvider } from '@/features/auth/context';
@@ -11,14 +12,17 @@ import { IS_NATIVE } from '@/lib/platform';
 import { isUpdateRequired } from '@/lib/updates/store';
 import { markBundleHealthy } from '@/lib/updates/updater';
 import Index from '@/routes/index';
-import LoginScreen from '@/routes/login';
-import AlertsScreen from '@/routes/tabs/alerts';
-import DashboardScreen from '@/routes/tabs/dashboard';
 import TabsLayout from '@/routes/tabs/layout';
-import LogsScreen from '@/routes/tabs/logs';
-import ProfileScreen from '@/routes/tabs/profile';
-import SettingsScreen from '@/routes/tabs/settings';
-import UsersScreen from '@/routes/users';
+
+// Each screen is its own file, fetched the first time it is opened, so starting the app does
+// not wait on screens nobody has visited yet.
+const LoginScreen = lazy(() => import('@/routes/login'));
+const DashboardScreen = lazy(() => import('@/routes/tabs/dashboard'));
+const AlertsScreen = lazy(() => import('@/routes/tabs/alerts'));
+const LogsScreen = lazy(() => import('@/routes/tabs/logs'));
+const SettingsScreen = lazy(() => import('@/routes/tabs/settings'));
+const ProfileScreen = lazy(() => import('@/routes/tabs/profile'));
+const UsersScreen = lazy(() => import('@/routes/users'));
 
 /** Android's back gesture walks the history, and leaves the app from the first page. */
 function BackButton() {
@@ -71,19 +75,21 @@ export default function App() {
             {/* Inside the appearance provider, so the update screen wears the chosen theme. */}
             <UpdateGate>
               <ConnectivityGate>
-                <Routes>
-                  <Route index element={<Index />} />
-                  <Route path="login" element={<LoginScreen />} />
-                  <Route element={<TabsLayout />}>
-                    <Route path="users" element={<UsersScreen />} />
-                    <Route path="dashboard" element={<DashboardScreen />} />
-                    <Route path="alerts" element={<AlertsScreen />} />
-                    <Route path="logs" element={<LogsScreen />} />
-                    <Route path="settings" element={<SettingsScreen />} />
-                    <Route path="profile" element={<ProfileScreen />} />
-                  </Route>
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
+                <Suspense fallback={<AppLoading />}>
+                  <Routes>
+                    <Route index element={<Index />} />
+                    <Route path="login" element={<LoginScreen />} />
+                    <Route element={<TabsLayout />}>
+                      <Route path="users" element={<UsersScreen />} />
+                      <Route path="dashboard" element={<DashboardScreen />} />
+                      <Route path="alerts" element={<AlertsScreen />} />
+                      <Route path="logs" element={<LogsScreen />} />
+                      <Route path="settings" element={<SettingsScreen />} />
+                      <Route path="profile" element={<ProfileScreen />} />
+                    </Route>
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </Suspense>
               </ConnectivityGate>
             </UpdateGate>
           </AppearanceProvider>

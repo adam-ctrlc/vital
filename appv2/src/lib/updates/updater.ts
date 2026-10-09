@@ -1,3 +1,4 @@
+import { App } from '@capacitor/app';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { APP_VERSION } from './app-version';
 import { compareVersions, MANIFEST_URL, parseManifest, planUpdate, type BundleRelease } from './manifest';
@@ -98,7 +99,6 @@ async function checkNative(): Promise<void> {
   checking = true;
   lastAttempt = now;
   try {
-    const { App } = await import('@capacitor/app');
     const info = await App.getInfo();
     const manifest = parseManifest(await readManifest());
     if (!manifest) return;
@@ -161,11 +161,9 @@ export function startUpdateChecks(): void {
   }
   settleLastAttempt();
   void checkNative();
-  void import('@capacitor/app').then(({ App }) =>
-    App.addListener('resume', () => {
-      if (Date.now() - lastSuccess > RECHECK_MS) void checkNative();
-    }),
-  );
+  void App.addListener('resume', () => {
+    if (Date.now() - lastSuccess > RECHECK_MS) void checkNative();
+  });
 }
 
 // Update now: download with progress, then switch to the new version, which reloads the app.

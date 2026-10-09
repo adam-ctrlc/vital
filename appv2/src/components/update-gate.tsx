@@ -1,3 +1,4 @@
+import { App } from '@capacitor/app';
 import { ArrowsClockwiseIcon, DownloadSimpleIcon } from '@phosphor-icons/react';
 import { useEffect, useSyncExternalStore, type ReactNode } from 'react';
 
@@ -29,12 +30,10 @@ export function UpdateGate({ children }: { children: ReactNode }) {
 
     let remove: (() => void) | null = null;
     let gone = false;
-    void import('@capacitor/app').then(({ App }) =>
-      App.addListener('backButton', () => undefined).then((handle) => {
-        if (gone) void handle.remove();
-        else remove = () => void handle.remove();
-      })
-    );
+    void App.addListener('backButton', () => undefined).then((handle) => {
+      if (gone) void handle.remove();
+      else remove = () => void handle.remove();
+    });
 
     return () => {
       gone = true;

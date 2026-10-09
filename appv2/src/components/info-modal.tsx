@@ -1,12 +1,24 @@
 import { BellIcon, ChartLineIcon, GaugeIcon, GearIcon, LightningIcon, PaletteIcon, PlugsConnectedIcon, PulseIcon, SunIcon, ThermometerIcon, UserCircleIcon, WarningIcon, WaveSineIcon, type Icon } from '@phosphor-icons/react';
-import { useState } from 'react';
+import { lazy, Suspense, useState, type ComponentProps } from 'react';
 
 import { BottomSheet } from '@/components/bottom-sheet';
-import { Formula, type FormulaName } from '@/components/formula';
+import type { FormulaName } from '@/components/formula';
 import { Segmented } from '@/components/ui/segmented';
 import { useAuth } from '@/features/auth/context';
 import { useAppearance, useColorScheme } from '@/lib/appearance';
 import { cn } from '@/lib/utils';
+
+// KaTeX is a third of the app's weight and only this sheet uses it, so it loads when the
+// sheet first opens rather than with the app.
+const LazyFormula = lazy(() => import('@/components/formula').then((module) => ({ default: module.Formula })));
+
+function Formula(props: ComponentProps<typeof LazyFormula>) {
+  return (
+    <Suspense fallback={null}>
+      <LazyFormula {...props} />
+    </Suspense>
+  );
+}
 
 type Tab = 'usage' | 'readings';
 

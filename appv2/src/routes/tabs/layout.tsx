@@ -8,12 +8,13 @@ import {
   UsersIcon,
   type Icon,
 } from '@phosphor-icons/react';
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router';
 
 import { ConfirmModal } from '@/components/confirm-modal';
 import { TabIcon } from '@/components/tab-icon';
 import { AppLoading } from '@/components/app-loading';
+import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/features/auth/context';
 import { NotificationsProvider, useNotifications } from '@/features/notifications/context';
 import * as usersApi from '@/features/users/api';
@@ -162,7 +163,16 @@ function Shell({ isAdmin }: { isAdmin: boolean }) {
 
       <main className="pt-safe mx-auto w-full max-w-3xl px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 md:pb-12">
         <div className="flex flex-col gap-4 pt-4 md:pt-8">
-          <Outlet />
+          {/* A screen opened for the first time loads its file here, inside the shell, so
+              the sidebar and tabs stay put instead of the whole app flashing to a loader. */}
+          <Suspense
+            fallback={
+              <div className="grid min-h-[50dvh] place-items-center">
+                <Spinner className="text-muted-foreground size-5" />
+              </div>
+            }>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 
