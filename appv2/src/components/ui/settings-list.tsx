@@ -11,11 +11,14 @@ import { cn } from '@/lib/utils';
  */
 export function SettingsSection({
   title,
+  description,
   footer,
   footerTone = 'muted',
   children,
 }: {
   title: string;
+  /** What the group is about, under the heading. For status, use the footer. */
+  description?: string;
   /** A line under the card: a saved confirmation, an error, a short hint. */
   footer?: string | null;
   footerTone?: 'muted' | 'primary' | 'destructive';
@@ -23,7 +26,10 @@ export function SettingsSection({
 }) {
   return (
     <section className="space-y-2">
-      <h2 className="text-muted-foreground px-1 text-sm font-medium">{title}</h2>
+      <div className="space-y-0.5 px-1">
+        <h2 className="text-muted-foreground text-sm font-medium">{title}</h2>
+        {description ? <p className="text-muted-foreground text-xs">{description}</p> : null}
+      </div>
       <Card className="gap-0 divide-y overflow-hidden py-0">{children}</Card>
       {footer ? (
         <p

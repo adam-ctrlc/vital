@@ -366,7 +366,7 @@ export default function ProfileScreen() {
         />
       </SettingsSection>
 
-      <SettingsSection title="Notifications" footer="Applies to this device only.">
+      <SettingsSection title="Notifications" description="Applies to this device only.">
         <SettingsRow
           icon={BellIcon}
           iconColor={primary.hex}
