@@ -23,22 +23,22 @@ func TestHeartbeatAckJSON(t *testing.T) {
 	tests := []struct {
 		name       string
 		thresholds settings.Settings
-		command    Command
+		pending    Pending
 		want       string
 	}{
 		{
 			name:       "defaults, nothing pending: serde's 900.0 and an explicit null",
 			thresholds: defaultThresholds,
-			command:    CommandNone,
+			pending:    Pending{},
 			want: `{"loadThresholdVa":900.0,"tripThresholdVa":980.0,"tempThresholdC":40.0,` +
-				`"relayCommand":null,"recloseDelaySeconds":30,"tripConfirmSeconds":3}`,
+				`"relayCommand":null,"recloseDelaySeconds":30,"tripConfirmSeconds":3,"relayCommandId":null}`,
 		},
 		{
 			name:       "an open command handed over",
 			thresholds: defaultThresholds,
-			command:    CommandOpen,
+			pending:    Pending{Command: CommandOpen, ID: 7},
 			want: `{"loadThresholdVa":900.0,"tripThresholdVa":980.0,"tempThresholdC":40.0,` +
-				`"relayCommand":"open","recloseDelaySeconds":30,"tripConfirmSeconds":3}`,
+				`"relayCommand":"open","recloseDelaySeconds":30,"tripConfirmSeconds":3,"relayCommandId":7}`,
 		},
 		{
 			name: "fractional thresholds and a close",
@@ -46,14 +46,14 @@ func TestHeartbeatAckJSON(t *testing.T) {
 				LoadThresholdVA: 850.5, TripThresholdVA: 975.25, TempThresholdC: 38.7,
 				RecloseDelaySeconds: 600, TripConfirmSeconds: 1,
 			},
-			command: CommandClose,
+			pending: Pending{Command: CommandClose, ID: 1},
 			want: `{"loadThresholdVa":850.5,"tripThresholdVa":975.25,"tempThresholdC":38.7,` +
-				`"relayCommand":"close","recloseDelaySeconds":600,"tripConfirmSeconds":1}`,
+				`"relayCommand":"close","recloseDelaySeconds":600,"tripConfirmSeconds":1,"relayCommandId":1}`,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := json.Marshal(NewHeartbeatAck(tt.thresholds, tt.command))
+			got, err := json.Marshal(NewHeartbeatAck(tt.thresholds, tt.pending))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -76,10 +76,11 @@ func TestHeartbeatAckCarriesWhatTheFirmwareParses(t *testing.T) {
 		"relayCommand":        "string", // ack["relayCommand"] | "", then strcmp "open"/"close"
 		"recloseDelaySeconds": "uint",   // ack["recloseDelaySeconds"] | 0UL
 		"tripConfirmSeconds":  "uint",   // ack["tripConfirmSeconds"] | 0UL
+		"relayCommandId":      "uint",   // ack["relayCommandId"] | 0, echoed as relayCommandAck
 	}
 
 	for _, command := range []Command{CommandOpen, CommandClose} {
-		raw, err := json.Marshal(NewHeartbeatAck(defaultThresholds, command))
+		raw, err := json.Marshal(NewHeartbeatAck(defaultThresholds, Pending{Command: command, ID: 3}))
 		if err != nil {
 			t.Fatal(err)
 		}

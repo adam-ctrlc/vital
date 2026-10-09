@@ -60,19 +60,20 @@ func (h *Handler) heartbeat(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// Loaded before the handover, not after it. RecordHeartbeat clears the command as
-	// it reads it, so anything that failed after it would lose the command for good.
+	// Loaded before the handover, not after it. For firmware that does not acknowledge,
+	// RecordHeartbeat clears the command as it reads it, so anything that failed after
+	// it would lose the command for good.
 	st, err := h.settings.Load(r.Context())
 	if err != nil {
 		return err
 	}
 
-	cmd, err := h.store.RecordHeartbeat(r.Context(), hb)
+	pending, err := h.store.RecordHeartbeat(r.Context(), hb, time.Now())
 	if err != nil {
 		return err
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, NewHeartbeatAck(st, cmd))
+	httpx.WriteJSON(w, http.StatusOK, NewHeartbeatAck(st, pending))
 	return nil
 }
 
@@ -98,7 +99,7 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("%s", err.Error())
 	}
 
-	if err := h.store.RequestRelayCommand(r.Context(), cmd); err != nil {
+	if err := h.store.RequestRelayCommand(r.Context(), cmd, time.Now()); err != nil {
 		return err
 	}
 

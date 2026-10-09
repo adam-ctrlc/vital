@@ -31,6 +31,7 @@ type Telemetry struct {
 	SignalDBm      *int32
 	UptimeSeconds  *int64
 	RelayLockedOut bool
+	ResetReason    *string
 }
 
 // HardwareSample is the newest hardware reading, reduced to what the status needs.
@@ -64,6 +65,9 @@ type Status struct {
 	LastSeenLabel *string    `json:"lastSeenLabel"`
 	// Simulated is true when the live feed is simulated rather than driven by hardware.
 	Simulated bool `json:"simulated"`
+	// ResetReason is why the board last restarted ("brownout", "panic", ...), or null
+	// when it has not said.
+	ResetReason *string `json:"resetReason"`
 }
 
 // BuildStatus combines the stored telemetry, the newest hardware reading (nil if
@@ -79,6 +83,7 @@ func BuildStatus(t Telemetry, latest *HardwareSample, sourceMode string, now tim
 		UptimeSeconds:  t.UptimeSeconds,
 		SSID:           t.SSID,
 		Simulated:      sourceMode != "hardware",
+		ResetReason:    t.ResetReason,
 	}
 	if latest == nil {
 		return status

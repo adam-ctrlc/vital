@@ -10,21 +10,24 @@ package readings
 // Shared by every statement that returns a reading, so a select list and its decoder
 // are one fact rather than several that must be kept in agreement.
 const readingColumns = "id, voltage_v, current_a, temperature_c, apparent_power_va, " +
-	"status, source, power_w, power_factor, frequency_hz, energy_kwh, relay_closed, recorded_at"
+	"status, source, power_w, power_factor, frequency_hz, energy_kwh, relay_closed, " +
+	"load_threshold_va, trip_threshold_va, temp_threshold_c, recorded_at"
 
 // insertReadingSQL stores a reading. recorded_at is left to the column default.
 //
 // Binds: ?1 voltage_v, ?2 current_a, ?3 temperature_c, ?4 apparent_power_va,
 // ?5 status, ?6 source, ?7 power_w, ?8 power_factor, ?9 frequency_hz,
-// ?10 energy_kwh, ?11 relay_closed (0, 1 or NULL).
+// ?10 energy_kwh, ?11 relay_closed (0, 1 or NULL), ?12 load_threshold_va,
+// ?13 trip_threshold_va, ?14 temp_threshold_c.
 //
 // The returned row must be drained before the connection is reused: over HTTP a
 // half-read result set leaves the stream unusable ("stream not found"), and ingest
 // goes on to evaluate alerts on the same connection.
 const insertReadingSQL = `insert into readings
     (voltage_v, current_a, temperature_c, apparent_power_va, status, source,
-     power_w, power_factor, frequency_hz, energy_kwh, relay_closed)
- values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+     power_w, power_factor, frequency_hz, energy_kwh, relay_closed,
+     load_threshold_va, trip_threshold_va, temp_threshold_c)
+ values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
  returning ` + readingColumns
 
 // recordSampleSQL stores a simulator sample at most once per interval, however many
@@ -37,11 +40,13 @@ const insertReadingSQL = `insert into readings
 //
 // Binds: ?1 voltage_v, ?2 current_a, ?3 temperature_c, ?4 apparent_power_va,
 // ?5 status, ?6 power_w, ?7 power_factor, ?8 frequency_hz, ?9 energy_kwh,
-// ?10 relay_closed, ?11 the window from sampleWindowModifier.
+// ?10 relay_closed, ?11 the window from sampleWindowModifier, ?12 load_threshold_va,
+// ?13 trip_threshold_va, ?14 temp_threshold_c.
 const recordSampleSQL = `insert into readings
     (voltage_v, current_a, temperature_c, apparent_power_va, status, source,
-     power_w, power_factor, frequency_hz, energy_kwh, relay_closed)
- select ?1, ?2, ?3, ?4, ?5, 'simulator', ?6, ?7, ?8, ?9, ?10
+     power_w, power_factor, frequency_hz, energy_kwh, relay_closed,
+     load_threshold_va, trip_threshold_va, temp_threshold_c)
+ select ?1, ?2, ?3, ?4, ?5, 'simulator', ?6, ?7, ?8, ?9, ?10, ?12, ?13, ?14
  where not exists (
      select 1 from readings
      where source = 'simulator'

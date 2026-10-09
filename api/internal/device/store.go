@@ -29,82 +29,75 @@ func NewStore(conn *sql.DB) *Store {
 	return &Store{db: conn}
 }
 
-// RecordHeartbeat stores a heartbeat into the singleton telemetry row and takes
-// the pending relay command, if any, in the same transaction. The command it
-// returns is cleared from the row: the caller must deliver it on this response,
-// because nothing will ever offer it again.
+// CommandLifetime is how long a relay command waits for the board. One older than
+// this is dropped rather than delivered: a board that was away for longer comes back
+// to a situation the operator has stopped watching, and should not act on it.
+const CommandLifetime = 60 * time.Second
+
+// RecordHeartbeat stores a heartbeat into the singleton telemetry row and hands over
+// the pending relay command, if any, in the same transaction (see handover).
 //
-// Load the thresholds for the ack before calling this, not after. Once this
-// commits the command is gone, so a failure afterwards would lose it.
-func (s *Store) RecordHeartbeat(ctx context.Context, hb Heartbeat) (Command, error) {
-	cmd, err := s.handover(ctx, sqlRecordHeartbeat, hb.args()...)
+// Load the thresholds for the ack before calling this, not after: for firmware that
+// does not acknowledge, the command is cleared as it is handed over, so a failure
+// afterwards would lose it.
+func (s *Store) RecordHeartbeat(ctx context.Context, hb Heartbeat, now time.Time) (Pending, error) {
+	p, err := s.handover(ctx, hb.RelayCommandAck, now, sqlRecordHeartbeat, hb.args()...)
 	if err != nil {
-		return CommandNone, fmt.Errorf("record heartbeat: %w", err)
+		return Pending{}, fmt.Errorf("record heartbeat: %w", err)
 	}
-	return cmd, nil
+	return p, nil
 }
 
-// TakeRelayCommand hands over any pending relay command and clears it, exactly once.
+// RelayHandover hands over the pending relay command for the reading ingest, by the
+// same rules as the heartbeat. ack is the body's relayCommandAck, nil when absent.
 //
-// The same discipline RecordHeartbeat uses, in a form the reading ingest can call.
-// The two serialise against each other, so whichever arrives second reads the row
-// the first already cleared and gets nothing. Without that they could both take
-// the same command away and the board would act on it twice.
-//
-// This exists so the command can ride back on the reading the board already posts
-// every few seconds, rather than needing a heartbeat of its own. Radio time is the
-// scarcest thing on that board.
-func (s *Store) TakeRelayCommand(ctx context.Context) (Command, error) {
-	cmd, err := s.handover(ctx, sqlClearRelayCommand)
+// The command rides back on the reading the board already posts every few seconds,
+// rather than needing a heartbeat of its own. Radio time is the scarcest thing on
+// that board.
+func (s *Store) RelayHandover(ctx context.Context, ack *int64, now time.Time) (Pending, error) {
+	p, err := s.handover(ctx, ack, now, "")
 	if err != nil {
-		return CommandNone, fmt.Errorf("take relay command: %w", err)
+		return Pending{}, fmt.Errorf("hand over relay command: %w", err)
 	}
-	return cmd, nil
+	return p, nil
 }
 
-// handover reads the pending command and runs clear (an update that sets
-// relay_command to null) inside one BEGIN IMMEDIATE transaction, returning what was
-// pending.
+// handover runs write (if any), reads the pending command and decides what to hand
+// over and whether to clear it, inside one BEGIN IMMEDIATE transaction:
 //
-// The read and the clear sharing one transaction is what makes the handover
-// exactly once: no window exists in which a second request could see a command the
-// first has already been given. The Sheets version could not do this. A spreadsheet
-// has no read-and-write statement, so it read the row and then wrote it back, and
-// two heartbeats arriving together could both take the same command away with them.
+//   - nothing pending, or a command older than CommandLifetime: nothing is handed
+//     over, and an expired command is cleared;
+//   - ack nil (firmware from before acknowledgements): handed over and cleared, so
+//     that firmware acts on it exactly once, as it always has;
+//   - ack at or past the command's id: the board has applied it, so it is cleared;
+//   - otherwise it is handed over and kept, and every request repeats it under the
+//     same id until the board acknowledges it. A response lost on its way to the
+//     board no longer loses the command with it.
 //
-// Postgres did it in a single statement, reading the command out of a `for update`
-// snapshot because `returning` reports the row as it is after the update. SQLite has
-// no `for update` and its `returning` is post-update too, so there is no single
-// statement that both clears the command and reports it. Three candidates were tried
-// against SQLite 3.50 with a command waiting, and all three returned null while
-// clearing the row: `returning relay_command`, `returning (select relay_command from
-// device_telemetry where id = 1)`, and the same read hoisted into a `materialized`
-// CTE. The subquery forms are accepted rather than rejected, which is the trap: they
-// compile, they clear the command, and the board is never told what it was.
-//
-// Two statements in a transaction is therefore the shape, and BEGIN IMMEDIATE is the
-// part that replaces `for update`: it takes the write lock up front rather than on the
-// first write, so a second request cannot begin until this one commits, and it then
-// reads the row this one already cleared. It gets null, so the command reaches the
-// board exactly once. A deferred transaction would let both read the command before
-// either wrote, and the loser would fail its write rather than read a stale value,
-// which is still safe but turns a routine heartbeat into an error.
+// BEGIN IMMEDIATE takes the write lock before the read, so a second request (or an
+// operator's new command) cannot begin until this one commits; reading the row this
+// one already cleared, it gets nothing. A deferred transaction would let two requests
+// read the same command before either wrote.
 //
 // That is why this does not use database/sql's BeginTx, which can only send a
 // deferred BEGIN. The statements go one by one over a single *sql.Conn instead;
 // over libSQL's HTTP protocol that connection carries one server-side stream, so
 // they all run inside the one transaction. The transaction is the first thing on
 // that connection, which matters on Turso: opening one on a connection that had just
-// run another statement failed in production under the Rust API.
-func (s *Store) handover(ctx context.Context, clear string, args ...any) (cmd Command, err error) {
+// run another statement failed in production.
+//
+// The read uses two statements rather than an UPDATE ... RETURNING because SQLite's
+// RETURNING reports the row after the update, so it cannot both clear the command
+// and say what it was.
+func (s *Store) handover(ctx context.Context, ack *int64, now time.Time, write string, args ...any) (p Pending, err error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return CommandNone, fmt.Errorf("open connection: %w", err)
+		return Pending{}, fmt.Errorf("open connection: %w", err)
 	}
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, sqlBeginImmediate); err != nil {
-		return CommandNone, fmt.Errorf("begin immediate: %w", err)
+		return Pending{}, fmt.Errorf("begin immediate: %w", err)
 	}
 	defer func() {
 		if err == nil {
@@ -118,20 +111,67 @@ func (s *Store) handover(ctx context.Context, clear string, args ...any) (cmd Co
 		}
 	}()
 
-	var pending sql.NullString
-	if err := conn.QueryRowContext(ctx, sqlSelectRelayCommand).Scan(&pending); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return CommandNone, fmt.Errorf("read pending relay command: %w", err)
+	if write != "" {
+		if _, err := conn.ExecContext(ctx, write, args...); err != nil {
+			return Pending{}, fmt.Errorf("write: %w", err)
+		}
 	}
 
-	if _, err := conn.ExecContext(ctx, clear, args...); err != nil {
-		return CommandNone, fmt.Errorf("clear pending relay command: %w", err)
+	var (
+		command     sql.NullString
+		id          sql.NullInt64
+		requestedAt sql.NullString
+	)
+	err = conn.QueryRowContext(ctx, sqlSelectRelayCommand).Scan(&command, &id, &requestedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Pending{}, fmt.Errorf("read pending relay command: %w", err)
+	}
+	pending := Pending{Command: Command(command.String), ID: id.Int64}
+
+	deliver, clear := decideHandover(pending, requestedAt, ack, now)
+	if clear {
+		if _, err := conn.ExecContext(ctx, sqlClearRelayCommand); err != nil {
+			return Pending{}, fmt.Errorf("clear pending relay command: %w", err)
+		}
 	}
 
 	if _, err := conn.ExecContext(ctx, sqlCommit); err != nil {
-		return CommandNone, fmt.Errorf("commit: %w", err)
+		return Pending{}, fmt.Errorf("commit: %w", err)
 	}
+	return deliver, nil
+}
 
-	return Command(pending.String), nil
+// decideHandover is handover's rule, apart from the database: what to hand over and
+// whether to clear the row.
+func decideHandover(pending Pending, requestedAt sql.NullString, ack *int64, now time.Time) (deliver Pending, clear bool) {
+	if pending.Command == CommandNone {
+		return Pending{}, false
+	}
+	if expired(requestedAt, now) {
+		return Pending{}, true
+	}
+	if ack == nil {
+		return pending, true
+	}
+	if pending.ID <= *ack {
+		return Pending{}, true
+	}
+	return pending, false
+}
+
+// expired reports whether a command requested at requestedAt has outlived
+// CommandLifetime. One with no time was queued by the API from before 0024 and is
+// delivered; one whose time will not parse is of unknown age and is dropped, the
+// safer of the two for something that moves the contacts.
+func expired(requestedAt sql.NullString, now time.Time) bool {
+	if !requestedAt.Valid {
+		return false
+	}
+	at, err := wire.ParseTime(requestedAt.String)
+	if err != nil {
+		return true
+	}
+	return now.Sub(at) > CommandLifetime
 }
 
 // RequestRelayCommand queues an operator's relay command for whichever request
@@ -140,8 +180,8 @@ func (s *Store) handover(ctx context.Context, clear string, args ...any) (cmd Co
 // It overwrites anything still pending rather than queueing behind it. Someone who
 // pressed open and then close means close: replaying the first would leave the
 // relay in the state they changed their mind about.
-func (s *Store) RequestRelayCommand(ctx context.Context, cmd Command) error {
-	if _, err := s.db.ExecContext(ctx, sqlRequestRelayCommand, string(cmd)); err != nil {
+func (s *Store) RequestRelayCommand(ctx context.Context, cmd Command, now time.Time) error {
+	if _, err := s.db.ExecContext(ctx, sqlRequestRelayCommand, string(cmd), wire.FormatStorage(now)); err != nil {
 		return fmt.Errorf("queue relay command %q: %w", cmd, err)
 	}
 	return nil
@@ -152,12 +192,13 @@ func (s *Store) RequestRelayCommand(ctx context.Context, cmd Command) error {
 func (s *Store) Telemetry(ctx context.Context) (Telemetry, error) {
 	var (
 		deviceID, firmware, ssid, ipAddress sql.NullString
+		resetReason                         sql.NullString
 		signalDBm                           sql.NullInt32
 		uptimeSeconds                       sql.NullInt64
 		t                                   Telemetry
 	)
 	err := s.db.QueryRowContext(ctx, sqlSelectTelemetry).Scan(
-		&deviceID, &firmware, &ssid, &ipAddress, &signalDBm, &uptimeSeconds, &t.RelayLockedOut,
+		&deviceID, &firmware, &ssid, &ipAddress, &signalDBm, &uptimeSeconds, &t.RelayLockedOut, &resetReason,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -172,6 +213,7 @@ func (s *Store) Telemetry(ctx context.Context) (Telemetry, error) {
 	t.IPAddress = ptrIf(ipAddress.String, ipAddress.Valid)
 	t.SignalDBm = ptrIf(signalDBm.Int32, signalDBm.Valid)
 	t.UptimeSeconds = ptrIf(uptimeSeconds.Int64, uptimeSeconds.Valid)
+	t.ResetReason = ptrIf(resetReason.String, resetReason.Valid)
 	return t, nil
 }
 

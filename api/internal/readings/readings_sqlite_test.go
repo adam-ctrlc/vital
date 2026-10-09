@@ -52,8 +52,8 @@ func (a *recordedAlerts) Evaluate(_ context.Context, m alerts.Measurement, t ale
 // brokenRelay fails every handover, to prove the command is only a passenger.
 type brokenRelay struct{}
 
-func (brokenRelay) TakeRelayCommand(context.Context) (device.Command, error) {
-	return device.CommandNone, errors.New("stream not found")
+func (brokenRelay) RelayHandover(context.Context, *int64, time.Time) (device.Pending, error) {
+	return device.Pending{}, errors.New("stream not found")
 }
 
 type harness struct {
@@ -190,7 +190,7 @@ func TestIngest(t *testing.T) {
 
 	// An overload under load, with the relay closed.
 	got := h.expect("POST", p, asDevice, `{"voltageV":230,"currentA":4,"temperatureC":41,"relayClosed":true}`, 200, "")
-	re := regexp.MustCompile(`^\{"id":1,"voltageV":230\.0,"currentA":4\.0,"temperatureC":41\.0,"apparentPowerVa":920\.0,"status":"overload","source":"hardware","powerW":null,"powerFactor":null,"frequencyHz":null,"energyKwh":null,"relayClosed":true,` + recordedAtPattern + `,"relayCommand":null\}$`)
+	re := regexp.MustCompile(`^\{"id":1,"voltageV":230\.0,"currentA":4\.0,"temperatureC":41\.0,"apparentPowerVa":920\.0,"status":"overload","source":"hardware","powerW":null,"powerFactor":null,"frequencyHz":null,"energyKwh":null,"relayClosed":true,"loadThresholdVa":900\.0,"tripThresholdVa":980\.0,"tempThresholdC":40\.0,` + recordedAtPattern + `,"relayCommand":null,"relayCommandId":null\}$`)
 	if !re.MatchString(got) {
 		t.Fatalf("ack = %s", got)
 	}
@@ -208,14 +208,14 @@ func TestIngest(t *testing.T) {
 		t.Fatalf("probe-only ack = %s", got)
 	}
 
-	// A queued relay command rides back exactly once.
-	h.exec(`update device_telemetry set relay_command = 'open' where id = 1`)
+	// Firmware that does not acknowledge gets a queued relay command exactly once.
+	queueRelay(h, "open", time.Now())
 	got = h.expect("POST", p, asDevice, `{"currentA":0}`, 200, "")
-	if !strings.HasSuffix(got, `"relayCommand":"open"}`) {
+	if !strings.HasSuffix(got, `"relayCommand":"open","relayCommandId":1}`) {
 		t.Fatalf("ack with command = %s", got)
 	}
 	got = h.expect("POST", p, asDevice, `{"currentA":0}`, 200, "")
-	if !strings.HasSuffix(got, `"relayCommand":null}`) {
+	if !strings.HasSuffix(got, `"relayCommand":null,"relayCommandId":null}`) {
 		t.Fatalf("command handed over twice: %s", got)
 	}
 	var stored struct {
@@ -232,12 +232,70 @@ func TestIngest(t *testing.T) {
 	if n := h.count(`select count(*) from readings`); n != 5 {
 		t.Fatalf("%d rows stored, want 5", n)
 	}
+
+	// Every row carries the limits it was judged against, so a later edit to the
+	// settings does not rewrite what an old overload meant.
+	if n := h.count(`select count(*) from readings
+		where load_threshold_va = 900 and trip_threshold_va = 980 and temp_threshold_c = 40`); n != 5 {
+		t.Fatalf("%d rows carry the limits, want 5", n)
+	}
+	h.alerts.err = nil
+	h.exec(`update settings set load_threshold_va = 500, trip_threshold_va = 600 where id = 1`)
+	got = h.expect("POST", p, asDevice, `{"voltageV":100,"currentA":5.5}`, 200, "")
+	if !strings.Contains(got, `"status":"overload"`) ||
+		!strings.Contains(got, `"loadThresholdVa":500.0,"tripThresholdVa":600.0,"tempThresholdC":40.0`) {
+		t.Fatalf("ack under the new limits = %s", got)
+	}
+}
+
+// queueRelay queues a command the way POST /device/relay does: the next id, stamped.
+func queueRelay(h *harness, command string, at time.Time) {
+	h.t.Helper()
+	h.exec(`update device_telemetry set relay_command = ?1, relay_command_id = relay_command_id + 1,
+		relay_command_at = ?2 where id = 1`, command, wire.FormatStorage(at))
+}
+
+func TestIngestAcknowledgedRelayCommand(t *testing.T) {
+	h := newHarness(t, options{})
+	const p = "/api/v1/readings"
+
+	queueRelay(h, "close", time.Now())
+
+	// Repeated, under the same id, until the board says it has applied it: the
+	// response carrying it may never have arrived.
+	for range 2 {
+		got := h.expect("POST", p, asDevice, `{"currentA":0,"relayCommandAck":0}`, 200, "")
+		if !strings.HasSuffix(got, `"relayCommand":"close","relayCommandId":1}`) {
+			t.Fatalf("unacknowledged = %s", got)
+		}
+	}
+	got := h.expect("POST", p, asDevice, `{"currentA":0,"relayCommandAck":1}`, 200, "")
+	if !strings.HasSuffix(got, `"relayCommand":null,"relayCommandId":null}`) {
+		t.Fatalf("after the ack = %s", got)
+	}
+	if n := h.count(`select count(*) from device_telemetry where relay_command is null`); n != 1 {
+		t.Fatal("the acknowledged command was not cleared")
+	}
+
+	// Older than CommandLifetime: dropped rather than delivered, and cleared.
+	queueRelay(h, "open", time.Now().Add(-device.CommandLifetime-time.Second))
+	got = h.expect("POST", p, asDevice, `{"currentA":0,"relayCommandAck":1}`, 200, "")
+	if !strings.HasSuffix(got, `"relayCommand":null,"relayCommandId":null}`) {
+		t.Fatalf("stale command = %s", got)
+	}
+	if n := h.count(`select count(*) from device_telemetry where relay_command is null`); n != 1 {
+		t.Fatal("the stale command was not cleared")
+	}
+
+	// The ack is not a measurement: alone, it is still an empty reading.
+	h.expect("POST", p, asDevice, `{"relayCommandAck":1}`, 400, `{"error":"At least one measurement is required"}`)
+	h.expect("POST", p, asDevice, `{"currentA":0,"relayCommandAck":"one"}`, 422, "")
 }
 
 func TestIngestRelayCommandIsBestEffort(t *testing.T) {
 	h := newHarness(t, options{relay: brokenRelay{}})
 	got := h.expect("POST", "/api/v1/readings", asDevice, `{"voltageV":230,"currentA":1}`, 200, "")
-	if !strings.HasSuffix(got, `"relayCommand":null}`) {
+	if !strings.HasSuffix(got, `"relayCommand":null,"relayCommandId":null}`) {
 		t.Fatalf("ack = %s", got)
 	}
 }
@@ -322,6 +380,10 @@ func TestLatestSimulation(t *testing.T) {
 	if len(h.alerts.calls) != 1 {
 		t.Fatalf("alerts evaluated %d times, want 1", len(h.alerts.calls))
 	}
+	if n := h.count(`select count(*) from readings where source = 'simulator'
+		and load_threshold_va = 900 and trip_threshold_va = 980 and temp_threshold_c = 40`); n != 1 {
+		t.Fatal("the simulated sample was stored without its limits")
+	}
 
 	// Once the newest sample is an interval old, the next poll writes another.
 	h.exec(`update readings set recorded_at = ?1 where source = 'simulator'`, wire.FormatStorage(time.Now().Add(-16*time.Second)))
@@ -343,6 +405,17 @@ func TestHistory(t *testing.T) {
 
 	h.expect("GET", p, "", "", 401, "")
 	h.expect("GET", p, h.user, "", 403, `{"error":"Admin access required"}`)
+
+	// Rows from before the limits were kept say so with null, never a guess; a row
+	// that has them carries them out.
+	h.exec(`update readings set load_threshold_va = 500, trip_threshold_va = 900, temp_threshold_c = 70
+		where apparent_power_va = 950`)
+	got := h.expect("GET", p+"?sort=load&limit=2", h.admin, "", 200, "")
+	if !strings.Contains(got, `"apparentPowerVa":950.0,"status":"overload"`) ||
+		!strings.Contains(got, `"loadThresholdVa":500.0,"tripThresholdVa":900.0,"tempThresholdC":70.0`) ||
+		!strings.Contains(got, `"loadThresholdVa":null,"tripThresholdVa":null,"tempThresholdC":null`) {
+		t.Fatalf("history limits = %s", got)
+	}
 
 	type page struct {
 		Rows []struct {

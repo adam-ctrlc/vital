@@ -19,6 +19,13 @@ type Input struct {
 	RelayClosed *bool `json:"relayClosed"`
 }
 
+// ingestBody is what the board posts: the measurement, plus the highest relay command
+// id it has applied. RelayCommandAck is absent from firmware that does not acknowledge.
+type ingestBody struct {
+	Input
+	RelayCommandAck *int64 `json:"relayCommandAck"`
+}
+
 // IsEmpty reports whether the input carries no measurement at all.
 //
 // A row of nothing but nulls is not a reading, it is a timestamp. Stored, it would

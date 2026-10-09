@@ -19,6 +19,23 @@ const (
 	CommandClose Command = "close"
 )
 
+// Pending is a relay command waiting for the board, with the id the board
+// acknowledges it by. The zero value is nothing pending.
+type Pending struct {
+	Command Command
+	// ID is the request's id, from device_telemetry.relay_command_id. Every request
+	// takes the next one, so an id the board has acknowledged is never reused.
+	ID int64
+}
+
+// IDOrNil is the id as the wire carries it: null when nothing is pending.
+func (p Pending) IDOrNil() *int64 {
+	if p.Command == CommandNone {
+		return nil
+	}
+	return &p.ID
+}
+
 // ErrInvalidCommand is returned for a relay request that is neither "open" nor
 // "close". The Rust API answered it with a 400 carrying exactly this text, so
 // it is returned unwrapped for the handler to pass through.

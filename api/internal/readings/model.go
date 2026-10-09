@@ -24,8 +24,13 @@ type Reading struct {
 	EnergyKwh       *wire.Float `json:"energyKwh"`
 	// RelayClosed is whether the relay was passing load when this row was measured.
 	// Stored as the integer 0 or 1; null for a simulated reading, which has no contacts.
-	RelayClosed *bool     `json:"relayClosed"`
-	RecordedAt  wire.Time `json:"recordedAt"`
+	RelayClosed *bool `json:"relayClosed"`
+	// The limits in force when this was recorded: Status was judged against
+	// LoadThresholdVA. Null for rows from before they were kept.
+	LoadThresholdVA *wire.Float `json:"loadThresholdVa"`
+	TripThresholdVA *wire.Float `json:"tripThresholdVa"`
+	TempThresholdC  *wire.Float `json:"tempThresholdC"`
+	RecordedAt      wire.Time   `json:"recordedAt"`
 }
 
 // LiveReading is the dashboard heartbeat payload: live values plus the thresholds
@@ -85,8 +90,11 @@ type TrendPoint struct {
 // seconds; a separate poll would cost radio time the board cannot spare.
 type IngestAck struct {
 	Reading
-	// RelayCommand is "open", "close", or null. Handed over exactly once.
+	// RelayCommand is "open", "close", or null. Repeated until the board acknowledges
+	// RelayCommandID, or handed over once to firmware that does not acknowledge.
 	RelayCommand device.Command `json:"relayCommand"`
+	// RelayCommandID identifies RelayCommand for the board to acknowledge, or null.
+	RelayCommandID *int64 `json:"relayCommandId"`
 }
 
 // wired converts an optional measurement to its JSON form.

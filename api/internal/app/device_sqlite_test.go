@@ -32,11 +32,15 @@ const deviceKey = "dev-key"
 const firmwareHeartbeat = `{"deviceId":"vital-esp32-01","firmware":"1.0.0","ssid":"home","ipAddress":"192.168.1.20",` +
 	`"signalDbm":-61,"uptimeSeconds":3600,"relayLockedOut":false}`
 
-// ackFor is the exact heartbeat response with the seeded settings.
-func ackFor(command string) string {
+// ackFor is the exact heartbeat response with the seeded settings, for a command
+// (JSON: null or a quoted word) handed over under id (JSON: null or a number).
+func ackFor(command, id string) string {
 	return `{"loadThresholdVa":900.0,"tripThresholdVa":980.0,"tempThresholdC":40.0,"relayCommand":` + command +
-		`,"recloseDelaySeconds":30,"tripConfirmSeconds":3}`
+		`,"recloseDelaySeconds":30,"tripConfirmSeconds":3,"relayCommandId":` + id + `}`
 }
+
+// noCommand is ackFor with nothing pending.
+var noCommand = ackFor("null", "null")
 
 // deviceHarness is newHarness with the database and deps kept, so a test can seed
 // readings and call the device store the way the readings ingest does. The busy
@@ -132,7 +136,7 @@ func TestDeviceHeartbeat(t *testing.T) {
 	h := newDeviceHarness(t)
 
 	// The fields the firmware parses, exactly as the Rust API wrote them.
-	h.expectHeartbeat(firmwareHeartbeat, 200, ackFor("null"))
+	h.expectHeartbeat(firmwareHeartbeat, 200, noCommand)
 
 	// Request-shape rejections, as axum gave them.
 	h.expectHeartbeat(`{"signalDbm":"strong"}`, 422, "")
@@ -143,7 +147,7 @@ func TestDeviceHeartbeat(t *testing.T) {
 	h.expect("PUT", "/api/v1/settings", h.admin,
 		`{"loadThresholdVa":850.5,"tripThresholdVa":950,"tempThresholdC":45,"recloseDelaySeconds":60,"tripConfirmSeconds":5}`, 200, "")
 	h.expectHeartbeat(`{}`, 200, `{"loadThresholdVa":850.5,"tripThresholdVa":950.0,"tempThresholdC":45.0,`+
-		`"relayCommand":null,"recloseDelaySeconds":60,"tripConfirmSeconds":5}`)
+		`"relayCommand":null,"recloseDelaySeconds":60,"tripConfirmSeconds":5,"relayCommandId":null}`)
 }
 
 func TestDeviceRelayValidation(t *testing.T) {
@@ -158,28 +162,50 @@ func TestDeviceRelayValidation(t *testing.T) {
 	h.expect("POST", "/api/v1/device/relay", h.admin, `{"command":`, 400, "")
 
 	// Nothing was queued by any of that.
-	h.expectHeartbeat(`{}`, 200, ackFor("null"))
+	h.expectHeartbeat(`{}`, 200, noCommand)
 }
 
 func TestDeviceRelayHandedOverExactlyOnce(t *testing.T) {
 	h := newDeviceHarness(t)
 
 	h.expect("POST", "/api/v1/device/relay", h.admin, `{"command":"open"}`, 200, `{"accepted":true}`)
-	h.expectHeartbeat(firmwareHeartbeat, 200, ackFor(`"open"`))
-	h.expectHeartbeat(firmwareHeartbeat, 200, ackFor("null"))
+	h.expectHeartbeat(firmwareHeartbeat, 200, ackFor(`"open"`, "1"))
+	h.expectHeartbeat(firmwareHeartbeat, 200, noCommand)
 
 	// A later press replaces a pending one rather than queueing behind it.
 	h.expect("POST", "/api/v1/device/relay", h.admin, `{"command":"open"}`, 200, `{"accepted":true}`)
 	h.expect("POST", "/api/v1/device/relay", h.admin, `{"command":"close"}`, 200, `{"accepted":true}`)
-	h.expectHeartbeat(`{}`, 200, ackFor(`"close"`))
-	h.expectHeartbeat(`{}`, 200, ackFor("null"))
+	h.expectHeartbeat(`{}`, 200, ackFor(`"close"`, "3"))
+	h.expectHeartbeat(`{}`, 200, noCommand)
 
 	// Taken by the reading ingest first, the heartbeat no longer sees it.
 	h.expect("POST", "/api/v1/device/relay", h.admin, `{"command":"close"}`, 200, `{"accepted":true}`)
-	if got, err := h.deps.Device.TakeRelayCommand(context.Background()); err != nil || got != device.CommandClose {
-		t.Fatalf("ingest handover = %q, %v; want close", got, err)
+	got, err := h.deps.Device.RelayHandover(context.Background(), nil, time.Now())
+	if err != nil || got != (device.Pending{Command: device.CommandClose, ID: 4}) {
+		t.Fatalf("ingest handover = %+v, %v; want close 4", got, err)
 	}
-	h.expectHeartbeat(`{}`, 200, ackFor("null"))
+	h.expectHeartbeat(`{}`, 200, noCommand)
+}
+
+// TestDeviceRelayAcknowledged is firmware that acknowledges: the command comes back
+// on every request, heartbeat or reading, until the board says it applied it.
+func TestDeviceRelayAcknowledged(t *testing.T) {
+	h := newDeviceHarness(t)
+	ctx := context.Background()
+
+	h.expect("POST", "/api/v1/device/relay", h.admin, `{"command":"open"}`, 200, `{"accepted":true}`)
+	h.expectHeartbeat(`{"relayCommandAck":0}`, 200, ackFor(`"open"`, "1"))
+	h.expectHeartbeat(`{"relayCommandAck":0}`, 200, ackFor(`"open"`, "1"))
+	ack := int64(0)
+	if got, err := h.deps.Device.RelayHandover(ctx, &ack, time.Now()); err != nil || got != (device.Pending{Command: device.CommandOpen, ID: 1}) {
+		t.Fatalf("ingest before the ack = %+v, %v; want open 1", got, err)
+	}
+
+	h.expectHeartbeat(`{"relayCommandAck":1}`, 200, noCommand)
+	ack = 1
+	if got, err := h.deps.Device.RelayHandover(ctx, &ack, time.Now()); err != nil || got != (device.Pending{}) {
+		t.Fatalf("ingest after the ack = %+v, %v; want nothing", got, err)
+	}
 }
 
 // TestDeviceRelayConcurrentHeartbeats: heartbeats arriving together over HTTP share
@@ -203,9 +229,9 @@ func TestDeviceRelayConcurrentHeartbeats(t *testing.T) {
 			switch {
 			case status != 200:
 				bad = append(bad, body)
-			case body == ackFor(`"open"`):
+			case body == ackFor(`"open"`, "1"):
 				opened++
-			case body != ackFor("null"):
+			case body != noCommand:
 				bad = append(bad, body)
 			}
 		})
@@ -224,10 +250,10 @@ func TestDeviceStatus(t *testing.T) {
 	h.expect("GET", "/api/v1/device/status", h.admin, "", 200,
 		`{"connected":false,"relayLockedOut":false,"relayClosed":null,"deviceId":null,"firmware":null,`+
 			`"ipAddress":null,"signalDbm":null,"uptimeSeconds":null,"ssid":null,"lastSeenAt":null,`+
-			`"lastSeenLabel":null,"simulated":false}`)
+			`"lastSeenLabel":null,"simulated":false,"resetReason":null}`)
 
 	// A heartbeat fills the identity; a fresh hardware reading makes it live.
-	h.expectHeartbeat(strings.Replace(firmwareHeartbeat, `"relayLockedOut":false`, `"relayLockedOut":true`, 1), 200, "")
+	h.expectHeartbeat(strings.Replace(firmwareHeartbeat, `"relayLockedOut":false`, `"relayLockedOut":true,"resetReason":"brownout"`, 1), 200, "")
 	fresh := time.Now().Add(-2 * time.Second)
 	h.insertReading(1, wire.FormatStorage(fresh))
 
@@ -235,14 +261,14 @@ func TestDeviceStatus(t *testing.T) {
 	want := `^\{"connected":true,"relayLockedOut":true,"relayClosed":true,"deviceId":"vital-esp32-01","firmware":"1.0.0",` +
 		`"ipAddress":"192.168.1.20","signalDbm":-61,"uptimeSeconds":3600,"ssid":"home",` +
 		`"lastSeenAt":"` + regexp.QuoteMeta(wire.FormatTime(fresh.Truncate(time.Millisecond))) + `",` +
-		`"lastSeenLabel":"[A-Z][a-z]+ \d{1,2}, \d{4} \d{1,2}:\d\d [AP]M","simulated":false\}$`
+		`"lastSeenLabel":"[A-Z][a-z]+ \d{1,2}, \d{4} \d{1,2}:\d\d [AP]M","simulated":false,"resetReason":"brownout"\}$`
 	if !regexp.MustCompile(want).MatchString(got) {
 		t.Errorf("live status = %s", got)
 	}
 
 	// Simulation mode is flagged.
 	h.expect("PUT", "/api/v1/settings/source", h.admin, `{"sourceMode":"simulation"}`, 200, "")
-	if got := h.expect("GET", "/api/v1/device/status", h.admin, "", 200, ""); !strings.HasSuffix(got, `"simulated":true}`) {
+	if got := h.expect("GET", "/api/v1/device/status", h.admin, "", 200, ""); !strings.HasSuffix(got, `"simulated":true,"resetReason":"brownout"}`) {
 		t.Errorf("simulation status = %s", got)
 	}
 }

@@ -46,21 +46,26 @@ func sampleReading() Reading {
 		PowerFactor:  wire.Ptr(0.9),
 		EnergyKwh:    wire.Ptr(1e16),
 		RelayClosed:  ptr(false),
-		RecordedAt:   stamp(time.UnixMilli(1_791_504_000_120)),
+		// Recorded under the limits it was judged against.
+		LoadThresholdVA: wire.Ptr(500),
+		TripThresholdVA: wire.Ptr(900),
+		TempThresholdC:  wire.Ptr(70),
+		RecordedAt:      stamp(time.UnixMilli(1_791_504_000_120)),
 	}
 }
 
-func TestIngestAckJSONMatchesRust(t *testing.T) {
-	const reading = `{"id":42,"voltageV":230.0,"currentA":null,"temperatureC":31.5,"apparentPowerVa":null,"status":"normal","source":"hardware","powerW":null,"powerFactor":0.9,"frequencyHz":null,"energyKwh":1e+16,"relayClosed":false,"recordedAt":"2026-10-09T00:00:00.120Z"`
+func TestIngestAckJSON(t *testing.T) {
+	const reading = `{"id":42,"voltageV":230.0,"currentA":null,"temperatureC":31.5,"apparentPowerVa":null,"status":"normal","source":"hardware","powerW":null,"powerFactor":0.9,"frequencyHz":null,"energyKwh":1e+16,"relayClosed":false,"loadThresholdVa":500.0,"tripThresholdVa":900.0,"tempThresholdC":70.0,"recordedAt":"2026-10-09T00:00:00.120Z"`
 	tests := []struct {
-		command device.Command
+		pending device.Pending
 		want    string
 	}{
-		{device.CommandNone, reading + `,"relayCommand":null}`},
-		{device.CommandOpen, reading + `,"relayCommand":"open"}`},
+		{device.Pending{}, reading + `,"relayCommand":null,"relayCommandId":null}`},
+		{device.Pending{Command: device.CommandOpen, ID: 3}, reading + `,"relayCommand":"open","relayCommandId":3}`},
 	}
 	for _, tt := range tests {
-		if got := mustJSON(t, IngestAck{Reading: sampleReading(), RelayCommand: tt.command}); got != tt.want {
+		ack := IngestAck{Reading: sampleReading(), RelayCommand: tt.pending.Command, RelayCommandID: tt.pending.IDOrNil()}
+		if got := mustJSON(t, ack); got != tt.want {
 			t.Errorf("got  %s\nwant %s", got, tt.want)
 		}
 	}

@@ -130,7 +130,7 @@ func TestStatusJSON(t *testing.T) {
 		}
 		want := `{"connected":false,"relayLockedOut":false,"relayClosed":null,"deviceId":null,` +
 			`"firmware":null,"ipAddress":null,"signalDbm":null,"uptimeSeconds":null,"ssid":null,` +
-			`"lastSeenAt":null,"lastSeenLabel":null,"simulated":true}`
+			`"lastSeenAt":null,"lastSeenLabel":null,"simulated":true,"resetReason":null}`
 		if string(got) != want {
 			t.Errorf("got  %s\nwant %s", got, want)
 		}
@@ -144,6 +144,7 @@ func TestStatusJSON(t *testing.T) {
 		telemetry := Telemetry{
 			DeviceID: ptr("vital-esp32-01"), Firmware: ptr("1.0.0"), SSID: ptr("home"),
 			IPAddress: ptr("192.168.1.20"), SignalDBm: ptr[int32](-61), UptimeSeconds: ptr[int64](3600),
+			ResetReason: ptr("brownout"),
 		}
 		got, err := json.Marshal(BuildStatus(telemetry, latest, "hardware", now))
 		if err != nil {
@@ -151,7 +152,8 @@ func TestStatusJSON(t *testing.T) {
 		}
 		want := `{"connected":true,"relayLockedOut":false,"relayClosed":false,"deviceId":"vital-esp32-01",` +
 			`"firmware":"1.0.0","ipAddress":"192.168.1.20","signalDbm":-61,"uptimeSeconds":3600,"ssid":"home",` +
-			`"lastSeenAt":"2026-10-09T06:04:25.120Z","lastSeenLabel":"October 9, 2026 2:04 PM","simulated":false}`
+			`"lastSeenAt":"2026-10-09T06:04:25.120Z","lastSeenLabel":"October 9, 2026 2:04 PM","simulated":false,` +
+			`"resetReason":"brownout"}`
 		if string(got) != want {
 			t.Errorf("got  %s\nwant %s", got, want)
 		}

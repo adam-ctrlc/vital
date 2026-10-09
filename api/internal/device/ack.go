@@ -18,26 +18,28 @@ type HeartbeatAck struct {
 	// alarm level so both stages of the protection come from one operator edit.
 	TripThresholdVA wire.Float `json:"tripThresholdVa"`
 	TempThresholdC  wire.Float `json:"tempThresholdC"`
-	// RelayCommand is cleared as it is handed over, so the board acts on it exactly
-	// once. A command that stayed set would re-apply on every heartbeat and undo
-	// whatever the protection decided in between.
+	// RelayCommand is what an operator asked for, or null. Firmware that acknowledges
+	// gets it until it does; older firmware gets it once (see Store.handover).
 	RelayCommand Command `json:"relayCommand"`
 	// RecloseDelaySeconds is how long the board waits before each reclose attempt.
 	RecloseDelaySeconds int32 `json:"recloseDelaySeconds"`
 	// TripConfirmSeconds is how long the load must stay above the trip level before
 	// the contacts open.
 	TripConfirmSeconds int32 `json:"tripConfirmSeconds"`
+	// RelayCommandID identifies RelayCommand for the board to acknowledge, or null.
+	RelayCommandID *int64 `json:"relayCommandId"`
 }
 
 // NewHeartbeatAck builds the response from the current settings and whatever
-// command the heartbeat took over (CommandNone if there was none).
-func NewHeartbeatAck(st settings.Settings, command Command) HeartbeatAck {
+// command the heartbeat is handing over (the zero Pending if there is none).
+func NewHeartbeatAck(st settings.Settings, pending Pending) HeartbeatAck {
 	return HeartbeatAck{
 		LoadThresholdVA:     st.LoadThresholdVA,
 		TripThresholdVA:     st.TripThresholdVA,
 		TempThresholdC:      st.TempThresholdC,
-		RelayCommand:        command,
+		RelayCommand:        pending.Command,
 		RecloseDelaySeconds: st.RecloseDelaySeconds,
 		TripConfirmSeconds:  st.TripConfirmSeconds,
+		RelayCommandID:      pending.IDOrNil(),
 	}
 }

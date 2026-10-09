@@ -24,10 +24,10 @@ type SettingsLoader interface {
 	Load(ctx context.Context) (settings.Settings, error)
 }
 
-// RelayCommands hands over a queued relay command exactly once. *device.Store
-// satisfies it.
+// RelayCommands hands over a queued relay command, acknowledged by ack (nil for
+// firmware that does not acknowledge). *device.Store satisfies it.
 type RelayCommands interface {
-	TakeRelayCommand(ctx context.Context) (device.Command, error)
+	RelayHandover(ctx context.Context, ack *int64, now time.Time) (device.Pending, error)
 }
 
 // Deps is what the readings routes are built from.
@@ -99,7 +99,7 @@ func (h *Handler) latest(w http.ResponseWriter, r *http.Request) error {
 	// The cheap check first, off the state already loaded: most polls are not due
 	// and should not pay a second round trip. recordSampleSQL decides for real.
 	if f.simulated && isSampleDue(state.latestSimulatorMs, h.d.SampleIntervalMS, now) {
-		sample, err := h.d.Store.RecordSample(ctx, f.input, h.d.SampleIntervalMS, float64(state.settings.LoadThresholdVA))
+		sample, err := h.d.Store.RecordSample(ctx, f.input, h.d.SampleIntervalMS, limitsOf(state.settings))
 		if err != nil {
 			return err
 		}
@@ -119,10 +119,11 @@ func (h *Handler) latest(w http.ResponseWriter, r *http.Request) error {
 // ingest is hardware ingest: POST /readings, authenticated by x-device-key.
 func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
-	var in Input
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	var body ingestBody
+	if err := httpx.DecodeJSON(r, &body); err != nil {
 		return err
 	}
+	in := body.Input
 	// Refused before any database round trip.
 	if err := ValidateIngest(in); err != nil {
 		return err
@@ -136,17 +137,18 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// Taken only after the reading is safely recorded: the command is cleared as it
-	// is read, so one handed to a request that then failed would be lost for good.
-	// Best effort: the reading is why the board called, the command is a passenger,
-	// and failing the call over it would make the board treat a stored reading as lost.
-	cmd, err := h.d.Relay.TakeRelayCommand(ctx)
+	// Taken only after the reading is safely recorded: for firmware that does not
+	// acknowledge, the command is cleared as it is read, so one handed to a request
+	// that then failed would be lost for good. Best effort: the reading is why the
+	// board called, the command is a passenger, and failing the call over it would
+	// make the board treat a stored reading as lost.
+	pending, err := h.d.Relay.RelayHandover(ctx, body.RelayCommandAck, h.d.Now())
 	if err != nil {
 		h.d.Log.WarnContext(ctx, "could not read the pending relay command", "error", err)
-		cmd = device.CommandNone
+		pending = device.Pending{}
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, IngestAck{Reading: reading, RelayCommand: cmd})
+	httpx.WriteJSON(w, http.StatusOK, IngestAck{Reading: reading, RelayCommand: pending.Command, RelayCommandID: pending.IDOrNil()})
 	return nil
 }
 
@@ -157,7 +159,8 @@ func (h *Handler) record(ctx context.Context, in Input, source string, st settin
 	if in.IsEmpty() {
 		return Reading{}, errEmptyReading()
 	}
-	load := float64(st.LoadThresholdVA)
+	limits := limitsOf(st)
+	load := limits.LoadVA
 	apparent, status := Evaluate(in, load)
 
 	// Loud only when worth reading: an overload, or a reading with no load in it, at
@@ -170,7 +173,7 @@ func (h *Handler) record(ctx context.Context, in Input, source string, st settin
 		h.d.Log.DebugContext(ctx, "reading evaluated", "source", source, "apparent_power_va", *apparent)
 	}
 
-	reading, err := h.d.Store.Insert(ctx, in, apparent, status, source)
+	reading, err := h.d.Store.Insert(ctx, in, apparent, status, source, limits)
 	if err != nil {
 		return Reading{}, err
 	}

@@ -8,8 +8,9 @@
 //   - record the telemetry the firmware self-reports on its heartbeat, and answer
 //     with the operator's thresholds so an edit made while the board was offline
 //     still reaches it;
-//   - hold an operator's relay command until the board next asks, then hand it
-//     over exactly once;
+//   - hold an operator's relay command until the board acknowledges it (or, for
+//     firmware that does not acknowledge, hand it over exactly once), dropping one
+//     that waits longer than CommandLifetime;
 //   - describe the link for the admin Settings screen, letting the relay position
 //     expire with the link rather than reporting a stale CLOSED forever.
 //

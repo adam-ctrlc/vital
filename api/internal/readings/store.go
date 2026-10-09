@@ -25,12 +25,13 @@ func NewStore(conn *sql.DB) *Store { return &Store{db: conn} }
 // QueryRowContext reads the one returned row and closes the result set, so the
 // connection is clean for the alert evaluation that follows (the Rust API had to
 // drain it by hand; a half-read stream broke the next statement).
-func (s *Store) Insert(ctx context.Context, in Input, apparent *float64, status Status, source string) (Reading, error) {
+func (s *Store) Insert(ctx context.Context, in Input, apparent *float64, status Status, source string, limits Limits) (Reading, error) {
 	r, err := scanReading(s.db.QueryRowContext(ctx, insertReadingSQL,
 		nullable(in.VoltageV), nullable(in.CurrentA), nullable(in.TemperatureC), nullable(apparent),
 		string(status), source,
 		nullable(in.PowerW), nullable(in.PowerFactor), nullable(in.FrequencyHz), nullable(in.EnergyKwh),
-		boolInt(in.RelayClosed)))
+		boolInt(in.RelayClosed),
+		limits.LoadVA, limits.TripVA, limits.TempC))
 	if db.IsNoRows(err) {
 		return Reading{}, httpx.Upstream("the reading insert returned no row")
 	}
@@ -44,17 +45,18 @@ func (s *Store) Insert(ctx context.Context, in Input, apparent *float64, status 
 // interval. It returns nil, with no error, when another request got there first, so
 // only the writer evaluates alerts. An empty input is skipped silently: nobody asked
 // for this write, so there is nobody to report it to.
-func (s *Store) RecordSample(ctx context.Context, in Input, sampleIntervalMs int64, loadThresholdVA float64) (*Reading, error) {
+func (s *Store) RecordSample(ctx context.Context, in Input, sampleIntervalMs int64, limits Limits) (*Reading, error) {
 	if in.IsEmpty() {
 		return nil, nil
 	}
-	apparent, status := Evaluate(in, loadThresholdVA)
+	apparent, status := Evaluate(in, limits.LoadVA)
 	r, err := scanReading(s.db.QueryRowContext(ctx, recordSampleSQL,
 		nullable(in.VoltageV), nullable(in.CurrentA), nullable(in.TemperatureC), nullable(apparent),
 		string(status),
 		nullable(in.PowerW), nullable(in.PowerFactor), nullable(in.FrequencyHz), nullable(in.EnergyKwh),
 		boolInt(in.RelayClosed),
-		sampleWindowModifier(sampleIntervalMs)))
+		sampleWindowModifier(sampleIntervalMs),
+		limits.LoadVA, limits.TripVA, limits.TempC))
 	if db.IsNoRows(err) {
 		return nil, nil
 	}
@@ -62,6 +64,16 @@ func (s *Store) RecordSample(ctx context.Context, in Input, sampleIntervalMs int
 		return nil, fmt.Errorf("record sample: %w", err)
 	}
 	return &r, nil
+}
+
+// Limits are the operator thresholds a reading is judged against and stored with.
+type Limits struct {
+	LoadVA, TripVA, TempC float64
+}
+
+// limitsOf takes the limits out of the settings.
+func limitsOf(st settings.Settings) Limits {
+	return Limits{LoadVA: float64(st.LoadThresholdVA), TripVA: float64(st.TripThresholdVA), TempC: float64(st.TempThresholdC)}
 }
 
 // LatestHardware is the newest reading a board pushed, or nil when there is none.
@@ -191,11 +203,13 @@ func scanReading(row rowScanner) (Reading, error) {
 		r                                       Reading
 		voltage, current, temperature, apparent sql.NullFloat64
 		power, powerFactor, frequency, energy   sql.NullFloat64
+		loadLimit, tripLimit, tempLimit         sql.NullFloat64
 		relayClosed                             sql.NullInt64
 		recordedAt                              string
 	)
 	if err := row.Scan(&r.ID, &voltage, &current, &temperature, &apparent, &r.Status, &r.Source,
-		&power, &powerFactor, &frequency, &energy, &relayClosed, &recordedAt); err != nil {
+		&power, &powerFactor, &frequency, &energy, &relayClosed,
+		&loadLimit, &tripLimit, &tempLimit, &recordedAt); err != nil {
 		return Reading{}, err
 	}
 	at, err := parseStored(recordedAt)
@@ -204,6 +218,7 @@ func scanReading(row rowScanner) (Reading, error) {
 	}
 	r.VoltageV, r.CurrentA, r.TemperatureC, r.ApparentPowerVA = nullFloat(voltage), nullFloat(current), nullFloat(temperature), nullFloat(apparent)
 	r.PowerW, r.PowerFactor, r.FrequencyHz, r.EnergyKwh = nullFloat(power), nullFloat(powerFactor), nullFloat(frequency), nullFloat(energy)
+	r.LoadThresholdVA, r.TripThresholdVA, r.TempThresholdC = nullFloat(loadLimit), nullFloat(tripLimit), nullFloat(tempLimit)
 	if relayClosed.Valid {
 		closed := relayClosed.Int64 != 0
 		r.RelayClosed = &closed

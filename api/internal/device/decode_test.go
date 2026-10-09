@@ -76,6 +76,16 @@ func TestDecodeHeartbeat(t *testing.T) {
 			want: Heartbeat{Firmware: ptr("2.0.0")},
 		},
 		{
+			name: "acknowledging firmware: the ack and the reset reason",
+			body: `{"uptimeSeconds":5,"relayCommandAck":12,"resetReason":"brownout"}`,
+			want: Heartbeat{UptimeSeconds: ptr[int64](5), RelayCommandAck: ptr[int64](12), ResetReason: ptr("brownout")},
+		},
+		{
+			name: "an ack of zero is present, not absent",
+			body: `{"relayCommandAck":0}`,
+			want: Heartbeat{RelayCommandAck: ptr[int64](0)},
+		},
+		{
 			name: "uptime past 32 bits still fits",
 			body: `{"uptimeSeconds":4294967295}`,
 			want: Heartbeat{UptimeSeconds: ptr[int64](4294967295)},
@@ -89,6 +99,7 @@ func TestDecodeHeartbeat(t *testing.T) {
 		{name: "signal beyond i32", body: `{"signalDbm":2147483648}`, wantStatus: http.StatusUnprocessableEntity},
 		{name: "lockout as integer", body: `{"relayLockedOut":1}`, wantStatus: http.StatusUnprocessableEntity},
 		{name: "device id as number", body: `{"deviceId":7}`, wantStatus: http.StatusUnprocessableEntity},
+		{name: "ack as text", body: `{"relayCommandAck":"3"}`, wantStatus: http.StatusUnprocessableEntity},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,7 +124,7 @@ func TestHeartbeatArgs(t *testing.T) {
 		{
 			name: "absent fields are SQL NULL so coalesce keeps the stored value",
 			hb:   Heartbeat{},
-			want: []any{nil, nil, nil, nil, nil, nil, nil},
+			want: []any{nil, nil, nil, nil, nil, nil, nil, nil},
 		},
 		{
 			name: "values are dereferenced in placeholder order",
@@ -125,8 +136,11 @@ func TestHeartbeatArgs(t *testing.T) {
 				SignalDBm:      ptr[int32](-70),
 				UptimeSeconds:  ptr[int64](99),
 				RelayLockedOut: ptr(false),
+				ResetReason:    ptr("Panic"),
+				// Not a column: the handover reads it, so args leaves it out.
+				RelayCommandAck: ptr[int64](4),
 			},
-			want: []any{"id", "fw", "ssid", "10.0.0.2", int32(-70), int64(99), false},
+			want: []any{"id", "fw", "ssid", "10.0.0.2", int32(-70), int64(99), false, "panic"},
 		},
 	}
 	for _, tt := range tests {
