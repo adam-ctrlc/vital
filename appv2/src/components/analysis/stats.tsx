@@ -44,12 +44,12 @@ export function Panel({
 }) {
   return (
     <Card className={cn('gap-3', flush ? 'pb-0 pt-4' : 'p-4')}>
-      <div className={cn('flex flex-wrap items-start justify-between gap-x-3 gap-y-1', flush && 'px-4')}>
+      <div className={cn('flex items-center justify-between gap-3', flush && 'px-4')}>
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">{title}</h2>
           {description ? <p className="text-muted-foreground text-xs">{description}</p> : null}
         </div>
-        {aside}
+        {aside ? <div className="shrink-0">{aside}</div> : null}
       </div>
       {children}
     </Card>
