@@ -32,10 +32,14 @@ export function hourLabel(hour: number): string {
   return `${h} ${hour < 12 ? 'AM' : 'PM'}`;
 }
 
-/** 0.00041 rather than 4.1e-4: these rates are usually far below 1. */
+/** Two significant digits as a plain decimal: 0.00000031, never 3.1e-7. */
+export function formatSmall(value: number): string {
+  return value.toLocaleString('en-US', { maximumSignificantDigits: 2, maximumFractionDigits: 20, useGrouping: false });
+}
+
 export function formatFactor(value: number | null): string {
   if (value === null) return 'No data';
-  return `${value >= 10 ? value.toFixed(0) : Number(value.toPrecision(2))}\u00a0×`;
+  return `${value >= 10 ? value.toFixed(0) : formatSmall(value)}\u00a0×`;
 }
 
 /** Hours of aging, with minutes or seconds when it is small. */

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { AnalysisPage } from '@/components/analysis/analysis-page';
 import { NumberSheet } from '@/components/analysis/number-sheet';
 import { Panel, Stats } from '@/components/analysis/stats';
+import { POWER_QUALITY_TERMS } from '@/components/analysis/terms';
 import { useChartColors } from '@/components/analysis/use-chart-colors';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,7 +20,7 @@ const EVENTS_PER_PAGE = 5;
 
 export default function PowerQualityScreen() {
   return (
-    <AnalysisPage icon={WaveSineIcon} title="Power quality">
+    <AnalysisPage icon={WaveSineIcon} title="Power quality" terms={POWER_QUALITY_TERMS}>
       {(data, { reload }) => <PowerQuality data={data} reload={reload} />}
     </AnalysisPage>
   );

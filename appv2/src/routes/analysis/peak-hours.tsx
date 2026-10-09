@@ -3,6 +3,7 @@ import { ClockIcon } from '@phosphor-icons/react';
 import { AnalysisPage } from '@/components/analysis/analysis-page';
 import { Heatmap } from '@/components/analysis/heatmap';
 import { Panel, Stats } from '@/components/analysis/stats';
+import { PEAK_HOURS_TERMS } from '@/components/analysis/terms';
 import { useChartColors } from '@/components/analysis/use-chart-colors';
 import type { HeatCell, Insights } from '@/features/insights/types';
 import { formatMinutes, hourLabel, WEEKDAYS_SHORT } from '@/lib/units';
@@ -10,7 +11,7 @@ import { formatMinutes, hourLabel, WEEKDAYS_SHORT } from '@/lib/units';
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export default function PeakHoursScreen() {
-  return <AnalysisPage icon={ClockIcon} title="Peak hours">{(data) => <PeakHours data={data} />}</AnalysisPage>;
+  return <AnalysisPage icon={ClockIcon} title="Peak hours" terms={PEAK_HOURS_TERMS}>{(data) => <PeakHours data={data} />}</AnalysisPage>;
 }
 
 /** Sums one measure over the cells that share a key. */

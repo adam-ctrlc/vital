@@ -2,6 +2,8 @@ import { ClipboardTextIcon, GearIcon, PowerIcon, UserCircleIcon, UsersIcon, type
 import { useEffect, useState } from 'react';
 
 import { AdminOnly, BACK_TO_SETTINGS } from '@/components/analysis/analysis-page';
+import { Explain } from '@/components/analysis/explain';
+import { AUDIT_TERMS } from '@/components/analysis/terms';
 import { Callout } from '@/components/ui/callout';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -67,7 +69,13 @@ export default function AuditScreen() {
 
   return (
     <AdminOnly>
-      <PageHeader icon={ClipboardTextIcon} iconColor={primary.hex} title="Audit log" back={BACK_TO_SETTINGS} />
+      <PageHeader
+        icon={ClipboardTextIcon}
+        iconColor={primary.hex}
+        title="Audit log"
+        back={BACK_TO_SETTINGS}
+        actions={<Explain title="Audit log" terms={AUDIT_TERMS} />}
+      />
       <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
         <Segmented aria-label="Show" options={FILTERS} value={filter} onValueChange={setFilter} size="sm" />
       </div>

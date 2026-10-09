@@ -3,13 +3,14 @@ import { HourglassMediumIcon } from '@phosphor-icons/react';
 import { AnalysisPage } from '@/components/analysis/analysis-page';
 import { DayBars } from '@/components/analysis/day-bars';
 import { Panel, Stats } from '@/components/analysis/stats';
+import { AGING_TERMS } from '@/components/analysis/terms';
 import { useChartColors } from '@/components/analysis/use-chart-colors';
 import { Callout } from '@/components/ui/callout';
 import type { Insights } from '@/features/insights/types';
-import { dateLabel, formatAgingHours, formatFactor } from '@/lib/units';
+import { dateLabel, formatAgingHours, formatFactor, formatSmall } from '@/lib/units';
 
 export default function AgingScreen() {
-  return <AnalysisPage icon={HourglassMediumIcon} title="Transformer aging">{(data) => <Aging data={data} />}</AnalysisPage>;
+  return <AnalysisPage icon={HourglassMediumIcon} title="Transformer aging" terms={AGING_TERMS}>{(data) => <Aging data={data} />}</AnalysisPage>;
 }
 
 function Aging({ data }: { data: Insights }) {
@@ -34,7 +35,7 @@ function Aging({ data }: { data: Insights }) {
           },
           {
             label: 'Life used',
-            value: `${Number(aging.lifeUsedPercent.toPrecision(2))}%`,
+            value: `${formatSmall(aging.lifeUsedPercent)}%`,
             detail: `of a ${aging.normalLifeHours.toLocaleString('en-US')} h normal life`,
           },
         ]}

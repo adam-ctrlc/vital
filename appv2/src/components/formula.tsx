@@ -145,3 +145,9 @@ export function Formula({ name, color, mutedColor, fontSize = 17, width }: Formu
     </div>
   );
 }
+
+/** Any one-line equation, in the surrounding text's colour and size. */
+export function Tex({ latex }: { latex: string }) {
+  const html = useMemo(() => tex(latex), [latex]);
+  return <span aria-hidden dangerouslySetInnerHTML={{ __html: html }} />;
+}

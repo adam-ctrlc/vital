@@ -3,7 +3,7 @@ import { autoTable } from 'jspdf-autotable';
 
 import type { Insights } from '@/features/insights/types';
 import { formatDateTime, formatShortDateTime } from '@/lib/datetime';
-import { dateLabel, formatAgingHours, formatFactor, formatMinutes, formatSeconds } from '@/lib/units';
+import { dateLabel, formatAgingHours, formatFactor, formatMinutes, formatSeconds, formatSmall } from '@/lib/units';
 
 // The built-in PDF fonts have no peso sign.
 const php = (value: number) =>
@@ -83,7 +83,7 @@ export function buildReportPdf(data: Insights, meta: ReportMeta): ArrayBuffer {
       ],
       [
         'Transformer aging',
-        `Average rate ${formatFactor(aging.avgAgingFactor)}, ${formatAgingHours(aging.equivalentHours)} of aging, ${Number(aging.lifeUsedPercent.toPrecision(2))}% of normal life (${aging.method} estimate)`,
+        `Average rate ${formatFactor(aging.avgAgingFactor)}, ${formatAgingHours(aging.equivalentHours)} of aging, ${formatSmall(aging.lifeUsedPercent)}% of normal life (${aging.method} estimate)`,
       ],
       ['Alerts', `${alerts.total} (${alerts.overload} overload, ${alerts.temperature} temperature), ${alerts.unacknowledged} not acknowledged`],
       ['Typical response', alerts.medianResponseSeconds === null ? 'No acknowledged alerts' : formatSeconds(alerts.medianResponseSeconds)],

@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { AnalysisPage } from '@/components/analysis/analysis-page';
 import { Panel, Stats } from '@/components/analysis/stats';
+import { REPORT_TERMS } from '@/components/analysis/terms';
 import { Button } from '@/components/ui/button';
 import { Callout } from '@/components/ui/callout';
 import { useAuth } from '@/features/auth/context';
@@ -18,7 +19,7 @@ const SOURCE_LABEL = { hardware: 'Sensor readings', simulator: 'Simulated readin
 
 export default function ReportsScreen() {
   return (
-    <AnalysisPage icon={FileTextIcon} title="Reports">
+    <AnalysisPage icon={FileTextIcon} title="Reports" terms={REPORT_TERMS}>
       {(data, { range }) => <Report data={data} range={range} />}
     </AnalysisPage>
   );

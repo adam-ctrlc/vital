@@ -2,6 +2,7 @@ import { ArrowsClockwiseIcon, ChartBarIcon, type Icon } from '@phosphor-icons/re
 import type { ReactNode } from 'react';
 import { Navigate } from 'react-router';
 
+import { Explain, type Term } from '@/components/analysis/explain';
 import { RangeBar } from '@/components/analysis/range-bar';
 import { Button } from '@/components/ui/button';
 import { Callout } from '@/components/ui/callout';
@@ -48,10 +49,12 @@ function DataSkeleton() {
 export function AnalysisPage({
   icon,
   title,
+  terms,
   children,
 }: {
   icon: Icon;
   title: string;
+  terms: Term[];
   children: (data: Insights, context: { range: AnalysisRange; reload: () => void }) => ReactNode;
 }) {
   const { primary } = useAppearance();
@@ -67,9 +70,12 @@ export function AnalysisPage({
         title={title}
         back={BACK_TO_SETTINGS}
         actions={
-          <Button variant="ghost" size="icon" className="size-8 rounded-full" aria-label="Refresh" disabled={loading} onClick={reload}>
-            <ArrowsClockwiseIcon weight="bold" className={cn(loading && 'animate-spin')} aria-hidden="true" />
-          </Button>
+          <>
+            <Explain title={title} terms={terms} />
+            <Button variant="ghost" size="icon" className="size-8 rounded-full" aria-label="Refresh" disabled={loading} onClick={reload}>
+              <ArrowsClockwiseIcon weight="bold" className={cn(loading && 'animate-spin')} aria-hidden="true" />
+            </Button>
+          </>
         }
       />
       <RangeBar value={range} onChange={setRange} />

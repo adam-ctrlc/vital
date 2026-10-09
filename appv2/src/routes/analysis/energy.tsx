@@ -5,6 +5,7 @@ import { AnalysisPage } from '@/components/analysis/analysis-page';
 import { DayBars } from '@/components/analysis/day-bars';
 import { NumberSheet } from '@/components/analysis/number-sheet';
 import { Panel, Stats } from '@/components/analysis/stats';
+import { ENERGY_TERMS } from '@/components/analysis/terms';
 import { useChartColors } from '@/components/analysis/use-chart-colors';
 import { Button } from '@/components/ui/button';
 import { Pager } from '@/components/ui/pager';
@@ -17,7 +18,7 @@ import { dateLabel, formatMinutes, peso } from '@/lib/units';
 
 export default function EnergyScreen() {
   return (
-    <AnalysisPage icon={LightningIcon} title="Energy & cost">
+    <AnalysisPage icon={LightningIcon} title="Energy & cost" terms={ENERGY_TERMS}>
       {(data, { reload }) => <Energy data={data} reload={reload} />}
     </AnalysisPage>
   );
