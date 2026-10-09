@@ -14,15 +14,21 @@ import { markBundleHealthy } from '@/lib/updates/updater';
 import Index from '@/routes/index';
 import TabsLayout from '@/routes/tabs/layout';
 
-// Each screen is its own file, fetched the first time it is opened, so starting the app does
-// not wait on screens nobody has visited yet.
-const LoginScreen = lazy(() => import('@/routes/login'));
-const DashboardScreen = lazy(() => import('@/routes/tabs/dashboard'));
-const AlertsScreen = lazy(() => import('@/routes/tabs/alerts'));
-const LogsScreen = lazy(() => import('@/routes/tabs/logs'));
-const SettingsScreen = lazy(() => import('@/routes/tabs/settings'));
-const ProfileScreen = lazy(() => import('@/routes/tabs/profile'));
-const UsersScreen = lazy(() => import('@/routes/users'));
+// Each screen is its own file. All of them start downloading here, while the loading screen
+// is still up, so by the time the session is checked the first screen is ready and no
+// second loader follows the first. Each import runs once; lazy() reuses its promise.
+function preload<T>(load: () => Promise<T>): () => Promise<T> {
+  const loading = load();
+  return () => loading;
+}
+
+const LoginScreen = lazy(preload(() => import('@/routes/login')));
+const DashboardScreen = lazy(preload(() => import('@/routes/tabs/dashboard')));
+const AlertsScreen = lazy(preload(() => import('@/routes/tabs/alerts')));
+const LogsScreen = lazy(preload(() => import('@/routes/tabs/logs')));
+const SettingsScreen = lazy(preload(() => import('@/routes/tabs/settings')));
+const ProfileScreen = lazy(preload(() => import('@/routes/tabs/profile')));
+const UsersScreen = lazy(preload(() => import('@/routes/users')));
 
 /** Android's back gesture walks the history, and leaves the app from the first page. */
 function BackButton() {
