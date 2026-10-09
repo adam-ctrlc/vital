@@ -2,7 +2,7 @@
 
 A Transformer Alert Management System for a 1 KVA distribution transformer, built as an electrical engineering thesis project at PHINMA Cagayan de Oro College, Carmen Campus.
 
-An ESP32 measures the transformer and reports it to a Rust API, which stores every sample, raises alerts when a reading crosses a threshold, and serves live readings to a web app that also ships as an Android app through Capacitor. The board also protects the transformer itself, opening a relay when the load runs away. The API can simulate the transformer from the clock, so the whole system can be demonstrated end to end with or without the hardware wired in.
+An ESP32 measures the transformer and reports it to a Go API, which stores every sample, raises alerts when a reading crosses a threshold, and serves live readings to a web app that also ships as an Android app through Capacitor. The board also protects the transformer itself, opening a relay when the load runs away. The API can simulate the transformer from the clock, so the whole system can be demonstrated end to end with or without the hardware wired in.
 
 ## What it does
 
@@ -24,7 +24,7 @@ An ESP32 measures the transformer and reports it to a Rust API, which stores eve
 ## Architecture
 
 ```
-ESP32  ──POST /readings + /device/heartbeat──>  Rust API  ──>  Turso (libSQL)
+ESP32  ──POST /readings + /device/heartbeat──>  Go API  ──>  Turso (libSQL)
    (x-device-key)                                  │
 Web app   ──polls, bearer token───────────────────┘
 (browser or Android, via Capacitor)
@@ -34,7 +34,7 @@ The API is stateless. Serverless functions cannot keep a background loop alive, 
 
 ## Tech stack
 
-**API** Rust, Axum 0.8, libsql against Turso (SQLite over HTTP), JWT (HS256) auth, argon2 password hashing. Deployed to Vercel in the `hnd1` region, which is where the database is: every query is an HTTP request, so the two being in different countries cost about seventy milliseconds each way, every time.
+**API** Go, net/http, database/sql with libsql-client-go against Turso (SQLite over HTTP), JWT (HS256) auth, argon2id password hashing. Deployed to Vercel in the `hnd1` region, which is where the database is: every query is an HTTP request, so the two being in different countries cost about seventy milliseconds each way, every time.
 
 **App** Vite, React 19, TypeScript, React Router, Tailwind, Phosphor icons and KaTeX, packaged for Android with Capacitor 8. It is a 1:1 port of the original Expo app, which has been retired.
 
@@ -43,11 +43,13 @@ The API is stateless. Serverless functions cannot keep a background loop alive, 
 ## Project structure
 
 ```
-api/            Rust API
-  src/          one module per domain: auth, readings, alerts, settings, device, users
-  schema.sql    the whole schema, applied by `cargo run --bin migrate`
-  scripts/      pg-to-turso.mjs, the one-off data copy
-  api/index.rs  Vercel serverless entrypoint
+api/            Go API (see api/README.md)
+  internal/     one package per domain: account, auth, readings, alerts, settings, device, users
+  cmd/          server (local) and migrate
+  schema.sql    the whole schema, applied by `go run ./cmd/migrate`
+  migrations/   one-off changes to the existing database
+  scripts/      pg-to-turso.mjs and other one-off data copies
+  api/index.go  Vercel serverless entrypoint
 appv2/          web app, and the Android app through Capacitor (see appv2/README.md)
   src/routes/   screens; tabs/ holds the tab group
   src/features/ API clients and types, split by domain
@@ -78,59 +80,70 @@ SEED_USER_PASSWORD=...
 
 ```bash
 cd api
-cargo run
+go run ./cmd/server
 ```
 
-Apply the schema once with `cargo run --bin migrate`. The server never does it: on serverless that would replay every statement on each cold start to discover there is nothing to do, and a schema change is a decision somebody makes rather than something that happens because a request arrived. Every statement is `if not exists`, so running it again is safe.
+Apply the schema once with `go run ./cmd/migrate`. The server never does it: on serverless that would replay every statement on each cold start to discover there is nothing to do, and a schema change is a decision somebody makes rather than something that happens because a request arrived. Every statement is `if not exists`, so running it again is safe.
 
 ### Accounts
 
-There are no accounts until you create one, and **the seeder is not committed**: this repository is public, and the accounts it creates are the live ones, since development and production share a database. Create `api/src/bin/seed.rs`, which cargo discovers automatically:
+There are no accounts until you create one, and **the seeder is not committed**: this repository is public, and the accounts it creates are the live ones, since development and production share a database. Create `api/cmd/seed/main.go` (ignored by git):
 
-```rust
-use dynavolt_api::auth::{Role, password};
-use dynavolt_api::config::Config;
-use dynavolt_api::db;
-use dynavolt_api::error::{AppError, AppResult};
+```go
+package main
 
-#[tokio::main]
-async fn main() -> AppResult<()> {
-    dotenvy::dotenv().ok();
+import (
+	"context"
+	"log"
+	"os"
 
-    // From the environment, never a literal. The insert below reapplies the password
-    // on every run, so a password written here would silently undo any rotation.
-    let password_plain = std::env::var("SEED_ADMIN_PASSWORD")
-        .map_err(|_| AppError::MissingEnv("SEED_ADMIN_PASSWORD".to_owned()))?;
+	"github.com/google/uuid"
 
-    let config = Config::from_env()?;
-    let database = db::Db::connect(&config.database_url, &config.database_token).await?;
-    let conn = database.conn()?;
+	"github.com/adam-ctrlc/vital/api/internal/auth"
+	"github.com/adam-ctrlc/vital/api/internal/config"
+	"github.com/adam-ctrlc/vital/api/internal/db"
+)
 
-    // The id is generated here because SQLite has no gen_random_uuid().
-    conn.execute(
-        "insert into users (id, email, username, password_hash, role, first_name, last_name)
-         values (?, ?, ?, ?, ?, ?, ?)
-         on conflict (email) do update set password_hash = excluded.password_hash",
-        libsql::params![
-            uuid::Uuid::new_v4().to_string(),
-            "you@example.com",
-            "you",
-            password::hash(&password_plain)?,
-            Role::Admin.as_str(),
-            "Your",
-            "Name",
-        ],
-    )
-    .await?;
+func main() {
+	if _, err := config.LoadDotenv(".env"); err != nil {
+		log.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    Ok(())
+	// From the environment, never a literal. The insert below reapplies the password
+	// on every run, so a password written here would silently undo any rotation.
+	plain := os.Getenv("SEED_ADMIN_PASSWORD")
+	if plain == "" {
+		log.Fatal("SEED_ADMIN_PASSWORD is not set")
+	}
+	hash, err := auth.HashPassword(plain)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	conn, err := db.Open(cfg.DatabaseURL, cfg.DatabaseToken)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	// The id is generated here because SQLite has no gen_random_uuid().
+	_, err = conn.ExecContext(context.Background(),
+		`insert into users (id, email, username, password_hash, role, first_name, last_name)
+		 values (?, ?, ?, ?, ?, ?, ?)
+		 on conflict (email) do update set password_hash = excluded.password_hash`,
+		uuid.NewString(), "you@example.com", "you", hash, "admin", "Your", "Name")
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 
-> The Rust crate is named `dynavolt_api` for continuity with the deployment; the product is Vital. Renaming the crate is a separate, deploy-affecting change.
-
 ```bash
-cargo run --bin seed
+go run ./cmd/seed
 ```
 
 Further accounts can be created and edited from the app by an admin. Sign in with an email or a username.
@@ -284,10 +297,10 @@ From `appv2/`:
 
 From `api/`:
 
-- `cargo run` starts the API
-- `cargo run --bin migrate` applies `schema.sql`, and reads the result back rather than trusting its own count
-- `cargo run --bin seed` creates accounts, if you have added a seeder
-- `cargo test` runs the unit and property tests
+- `go run ./cmd/server` starts the API
+- `go run ./cmd/migrate` applies `schema.sql`, and reads the result back rather than trusting its own count; `-file migrations/<name>.sql` applies one migration
+- `go run ./cmd/seed` creates accounts, if you have added a seeder
+- `go test ./...` runs the tests; `go test -tags sqlite ./...` adds the end-to-end ones against a local SQLite file
 
 ## License
 

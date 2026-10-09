@@ -1,34 +1,14 @@
-# Cargo build artifacts
-/target
-debug/
-
-# rustfmt backups
-**/*.rs.bk
-
-# MSVC debug info
-*.pdb
-
-# sqlx offline query cache (regenerate with: cargo sqlx prepare)
-/.sqlx
-
-# coverage output
-*.profraw
-*.profdata
-
 # secrets: never commit real credentials (this repo is public)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
-# editor / OS noise
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+# local SQLite databases (go run -tags sqlite)
+*.db
+*.db-*
 
 .vercel
-.env*
+.DS_Store
 
-# Holds real account passwords and this repo is public. Cargo auto-discovers it
-# locally, so `cargo run --bin seed` keeps working without it being committed.
-src/bin/seed.rs
+# the seeder creates live accounts; never committed (see the root README)
+cmd/seed/
