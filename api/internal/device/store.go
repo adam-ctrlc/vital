@@ -63,56 +63,16 @@ func (s *Store) RelayHandover(ctx context.Context, ack *int64, now time.Time) (P
 }
 
 // handover runs write (if any), reads the pending command and decides what to hand
-// over and whether to clear it, inside one BEGIN IMMEDIATE transaction:
+// over. No transaction: over Turso's HTTP protocol a dedicated connection's stream can
+// already be closed when BEGIN arrives, and nothing then reaches the board. Each step is
+// one statement on the pool instead, which reconnects by itself.
 //
-//   - nothing pending, or a command older than CommandLifetime: nothing is handed
-//     over, and an expired command is cleared;
-//   - ack nil (firmware from before acknowledgements): handed over and cleared, so
-//     that firmware acts on it exactly once, as it always has;
-//   - ack at or past the command's id: the board has applied it, so it is cleared;
-//   - otherwise it is handed over and kept, and every request repeats it under the
-//     same id until the board acknowledges it. A response lost on its way to the
-//     board no longer loses the command with it.
-//
-// BEGIN IMMEDIATE takes the write lock before the read, so a second request (or an
-// operator's new command) cannot begin until this one commits; reading the row this
-// one already cleared, it gets nothing. A deferred transaction would let two requests
-// read the same command before either wrote.
-//
-// That is why this does not use database/sql's BeginTx, which can only send a
-// deferred BEGIN. The statements go one by one over a single *sql.Conn instead;
-// over libSQL's HTTP protocol that connection carries one server-side stream, so
-// they all run inside the one transaction. The transaction is the first thing on
-// that connection, which matters on Turso: opening one on a connection that had just
-// run another statement failed in production.
-//
-// The read uses two statements rather than an UPDATE ... RETURNING because SQLite's
-// RETURNING reports the row after the update, so it cannot both clear the command
-// and say what it was.
-func (s *Store) handover(ctx context.Context, ack *int64, now time.Time, write string, args ...any) (p Pending, err error) {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return Pending{}, fmt.Errorf("open connection: %w", err)
-	}
-	defer conn.Close()
-
-	if _, err := conn.ExecContext(ctx, sqlBeginImmediate); err != nil {
-		return Pending{}, fmt.Errorf("begin immediate: %w", err)
-	}
-	defer func() {
-		if err == nil {
-			return
-		}
-		// Detached from ctx so a cancelled request still releases the write lock.
-		// If even this fails, returning the connection closes its stream, which
-		// abandons the transaction server side.
-		if _, rbErr := conn.ExecContext(context.WithoutCancel(ctx), sqlRollback); rbErr != nil {
-			err = errors.Join(err, fmt.Errorf("rollback: %w", rbErr))
-		}
-	}()
-
+// The clear only matches the command id that was read, so a command queued in between
+// survives, and when two requests race for a take-once command only the one whose clear
+// lands delivers it.
+func (s *Store) handover(ctx context.Context, ack *int64, now time.Time, write string, args ...any) (Pending, error) {
 	if write != "" {
-		if _, err := conn.ExecContext(ctx, write, args...); err != nil {
+		if _, err := s.db.ExecContext(ctx, write, args...); err != nil {
 			return Pending{}, fmt.Errorf("write: %w", err)
 		}
 	}
@@ -122,21 +82,24 @@ func (s *Store) handover(ctx context.Context, ack *int64, now time.Time, write s
 		id          sql.NullInt64
 		requestedAt sql.NullString
 	)
-	err = conn.QueryRowContext(ctx, sqlSelectRelayCommand).Scan(&command, &id, &requestedAt)
+	err := s.db.QueryRowContext(ctx, sqlSelectRelayCommand).Scan(&command, &id, &requestedAt)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Pending{}, fmt.Errorf("read pending relay command: %w", err)
 	}
 	pending := Pending{Command: Command(command.String), ID: id.Int64}
 
 	deliver, clear := decideHandover(pending, requestedAt, ack, now)
-	if clear {
-		if _, err := conn.ExecContext(ctx, sqlClearRelayCommand); err != nil {
-			return Pending{}, fmt.Errorf("clear pending relay command: %w", err)
-		}
+	if !clear {
+		return deliver, nil
 	}
-
-	if _, err := conn.ExecContext(ctx, sqlCommit); err != nil {
-		return Pending{}, fmt.Errorf("commit: %w", err)
+	res, err := s.db.ExecContext(ctx, sqlClearRelayCommand, pending.ID)
+	if err != nil {
+		return Pending{}, fmt.Errorf("clear pending relay command: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return Pending{}, fmt.Errorf("clear pending relay command: %w", err)
+	} else if n == 0 {
+		return Pending{}, nil
 	}
 	return deliver, nil
 }

@@ -1,16 +1,6 @@
 package device
 
-// Transaction control for the relay handover. Sent as statements on one dedicated
-// connection rather than through database/sql's BeginTx, because BeginTx can only
-// say BEGIN, and the handover needs BEGIN IMMEDIATE (see Store.handover).
-const (
-	sqlBeginImmediate = "begin immediate"
-	sqlCommit         = "commit"
-	sqlRollback       = "rollback"
-)
-
-// sqlSelectRelayCommand reads the pending command, its id and when it was requested,
-// inside the handover transaction.
+// sqlSelectRelayCommand reads the pending command, its id and when it was requested.
 const sqlSelectRelayCommand = `select relay_command, relay_command_id, relay_command_at
 from device_telemetry where id = 1`
 
@@ -31,7 +21,8 @@ where id = 1`
 
 // sqlClearRelayCommand clears the pending command once the handover decides it is
 // done with: delivered to firmware that does not acknowledge, acknowledged, or expired.
-const sqlClearRelayCommand = `update device_telemetry set relay_command = null where id = 1`
+const sqlClearRelayCommand = `update device_telemetry set relay_command = null
+where id = 1 and relay_command is not null and relay_command_id = ?1`
 
 // sqlRequestRelayCommand queues an operator's command, replacing anything pending, under
 // the next id. ?2 is the request time in the stored shape.

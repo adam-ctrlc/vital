@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
 )
@@ -42,7 +43,11 @@ func Open(url, token string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not open the database: %w", err)
 	}
-	return sql.OpenDB(connector), nil
+	conn := sql.OpenDB(connector)
+	// Turso closes an idle HTTP stream after a few seconds; a pooled connection kept
+	// longer fails its next statement with "stream is closed" or EOF.
+	conn.SetConnMaxIdleTime(5 * time.Second)
+	return conn, nil
 }
 
 // IsUniqueViolation reports whether err is SQLite refusing a duplicate key.
