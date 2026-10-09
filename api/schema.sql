@@ -121,6 +121,12 @@ create table if not exists settings (
     trip_confirm_seconds  integer not null default 3
         check (trip_confirm_seconds between 1 and 60),
     source_mode           text not null default 'hardware',
+    -- Pesos per kWh, for the estimated cost on the analysis screen.
+    energy_rate_per_kwh   real not null default 12
+        check (energy_rate_per_kwh >= 0 and energy_rate_per_kwh <= 1000),
+    -- What the supply should read, for judging sags and swells.
+    nominal_voltage_v     real not null default 120
+        check (nominal_voltage_v >= 50 and nominal_voltage_v <= 500),
     created_at            text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at            text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     -- The trip must sit above the alarm or the two stages collapse into one: the relay
@@ -163,3 +169,17 @@ create table if not exists push_tokens (
 );
 
 create index if not exists push_tokens_user_id_idx on push_tokens (user_id);
+
+-- One row per change an operator made. actor_name is copied in so the record still
+-- reads after the account is renamed or deleted; detail is JSON.
+create table if not exists audit_events (
+    id         integer primary key autoincrement,
+    at         text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    actor_id   text references users (id) on delete set null,
+    actor_name text,
+    action     text not null,
+    target     text,
+    detail     text
+);
+
+create index if not exists audit_events_at_idx on audit_events (at desc);
