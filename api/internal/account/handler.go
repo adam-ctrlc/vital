@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adam-ctrlc/vital/api/internal/audit"
 	"github.com/adam-ctrlc/vital/api/internal/auth"
 	"github.com/adam-ctrlc/vital/api/internal/httpx"
 	"github.com/adam-ctrlc/vital/api/internal/users"
@@ -33,14 +34,17 @@ type Handler struct {
 	guard    *auth.Guard
 	login    *httpx.RateLimit
 	register *httpx.RateLimit
+	audit    *audit.Log
 }
 
-// NewHandler returns the /auth routes.
-func NewHandler(conn *sql.DB, userStore *users.Store, guard *auth.Guard) *Handler {
+// NewHandler returns the /auth routes. Profile and password changes are recorded in
+// log (nil records nothing).
+func NewHandler(conn *sql.DB, userStore *users.Store, guard *auth.Guard, log *audit.Log) *Handler {
 	return &Handler{
 		store:    store{db: conn},
 		users:    userStore,
 		guard:    guard,
+		audit:    log,
 		login:    httpx.NewRateLimit("login", LoginBurst, LoginPeriod),
 		register: httpx.NewRateLimit("register", RegisterBurst, RegisterPeriod),
 	}
@@ -189,7 +193,7 @@ func (h *Handler) signUp(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	err := h.users.Create(ctx, users.CreateInput{
+	_, err := h.users.Create(ctx, users.CreateInput{
 		Email: email, Password: body.Password, Role: auth.User,
 		FirstName: body.FirstName, MiddleName: body.MiddleName, LastName: body.LastName,
 		Username: &username,
@@ -266,6 +270,17 @@ func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) error {
 	role, err := updated.parsedRole()
 	if err != nil {
 		return err
+	}
+
+	changes := audit.Changes{}
+	changes.Add("firstName", current.firstName, updated.firstName)
+	changes.Add("middleName", current.middleName, updated.middleName)
+	changes.Add("lastName", current.lastName, updated.lastName)
+	changes.Add("email", current.email, updated.email)
+	changes.Add("username", current.username, updated.username)
+	if len(changes) > 0 {
+		profile := updated.profile(role)
+		h.audit.Record(ctx, caller.ID, audit.AccountUpdate, profile.FullName, changes)
 	}
 	httpx.WriteJSON(w, http.StatusOK, updated.profile(role))
 	return nil
@@ -344,6 +359,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) error {
 	if err := h.store.setPassword(ctx, caller.ID, hash); err != nil {
 		return err
 	}
+	h.audit.Record(ctx, caller.ID, audit.AccountPassword, users.FullName(found.firstName, found.middleName, found.lastName), nil)
 	httpx.NoContent(w, http.StatusNoContent)
 	return nil
 }

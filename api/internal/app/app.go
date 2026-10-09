@@ -10,11 +10,13 @@ import (
 
 	"github.com/adam-ctrlc/vital/api/internal/account"
 	"github.com/adam-ctrlc/vital/api/internal/alerts"
+	"github.com/adam-ctrlc/vital/api/internal/audit"
 	"github.com/adam-ctrlc/vital/api/internal/auth"
 	"github.com/adam-ctrlc/vital/api/internal/config"
 	"github.com/adam-ctrlc/vital/api/internal/db"
 	"github.com/adam-ctrlc/vital/api/internal/device"
 	"github.com/adam-ctrlc/vital/api/internal/httpx"
+	"github.com/adam-ctrlc/vital/api/internal/insights"
 	"github.com/adam-ctrlc/vital/api/internal/notifications"
 	"github.com/adam-ctrlc/vital/api/internal/readings"
 	"github.com/adam-ctrlc/vital/api/internal/settings"
@@ -36,6 +38,8 @@ type Deps struct {
 	// Alerts opens and re-announces alerts for stored readings (readings ingest and
 	// live sampling call Evaluate), pushing through notifications to every device.
 	Alerts *alerts.Service
+	// Audit records operator changes: settings, relay commands, accounts.
+	Audit *audit.Log
 }
 
 // New opens the database and returns the API.
@@ -57,6 +61,7 @@ func NewDeps(cfg config.Config, conn *sql.DB) Deps {
 		Settings: settings.NewStore(conn),
 		Device:   device.NewStore(conn),
 		Alerts:   newAlerts(conn, defaultPush()),
+		Audit:    audit.NewLog(conn),
 	}
 }
 
@@ -69,10 +74,10 @@ func Routes(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+httpx.APIPrefix+"/health", health)
 
-	account.NewHandler(d.DB, d.Users, d.Guard).Register(mux)
-	users.NewHandler(d.Users, d.Guard).Register(mux)
-	settings.NewHandler(d.Settings, d.Guard).Register(mux)
-	device.NewHandler(d.Device, d.Settings, d.Guard).Register(mux)
+	account.NewHandler(d.DB, d.Users, d.Guard, d.Audit).Register(mux)
+	users.NewHandler(d.Users, d.Guard, d.Audit).Register(mux)
+	settings.NewHandler(d.Settings, d.Guard, d.Audit).Register(mux)
+	device.NewHandler(d.Device, d.Settings, d.Guard, d.Audit).Register(mux)
 	readings.NewHandler(readings.Deps{
 		Store:            readings.NewStore(d.DB),
 		Settings:         d.Settings,
@@ -83,6 +88,8 @@ func Routes(d Deps) http.Handler {
 	}).Register(mux)
 	alerts.NewHandler(alerts.NewStore(d.DB), d.Guard).Register(mux)
 	notifications.NewHandler(notifications.NewStore(d.DB), d.Guard).Register(mux)
+	audit.NewHandler(audit.NewStore(d.DB), d.Guard).Register(mux)
+	insights.NewHandler(d.DB, d.Settings, d.Guard).Register(mux)
 
 	return httpx.CORS(httpx.Log(httpx.Bare(mux)))
 }

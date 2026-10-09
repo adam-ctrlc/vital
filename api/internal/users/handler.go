@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/adam-ctrlc/vital/api/internal/audit"
 	"github.com/adam-ctrlc/vital/api/internal/auth"
 	"github.com/adam-ctrlc/vital/api/internal/db"
 	"github.com/adam-ctrlc/vital/api/internal/httpx"
@@ -13,11 +14,12 @@ import (
 type Handler struct {
 	store *Store
 	guard *auth.Guard
+	audit *audit.Log
 }
 
-// NewHandler returns the users routes.
-func NewHandler(store *Store, guard *auth.Guard) *Handler {
-	return &Handler{store: store, guard: guard}
+// NewHandler returns the users routes. Changes are recorded in log (nil records nothing).
+func NewHandler(store *Store, guard *auth.Guard, log *audit.Log) *Handler {
+	return &Handler{store: store, guard: guard, audit: log}
 }
 
 // Register mounts the routes on mux.
@@ -116,9 +118,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	if err := h.store.Create(ctx, in, StatusActive); err != nil {
+	username, err := h.store.Create(ctx, in, StatusActive)
+	if err != nil {
 		return err
 	}
+	admin, _ := auth.IdentityFrom(ctx)
+	h.audit.Record(ctx, admin.ID, audit.UserCreate,
+		FullName(trim(in.FirstName), CleanOptional(in.MiddleName), trim(in.LastName)),
+		map[string]any{"username": username, "role": string(in.Role), "email": CleanEmail(in.Email)})
 	httpx.NoContent(w, http.StatusCreated)
 	return nil
 }
@@ -129,9 +136,13 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	u, err := h.store.Approve(r.Context(), id)
+	u, activated, err := h.store.Approve(r.Context(), id)
 	if err != nil {
 		return err
+	}
+	if activated {
+		admin, _ := auth.IdentityFrom(r.Context())
+		h.audit.Record(r.Context(), admin.ID, audit.UserApprove, u.FullName, map[string]any{"username": u.Username})
 	}
 	httpx.WriteJSON(w, http.StatusOK, u)
 	return nil
@@ -164,17 +175,32 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// NotFound before the role guard, so a missing id never reads as a role error.
-	current, err := h.store.RoleOf(r.Context(), id)
+	before, err := h.store.Get(r.Context(), id)
 	if err != nil {
 		return err
 	}
-	if admin.ID == id && string(in.Role) != current {
+	if admin.ID == id && string(in.Role) != before.Role {
 		return httpx.BadRequest("you cannot change your own role")
 	}
 
 	u, err := h.store.Update(r.Context(), id, in)
 	if err != nil {
 		return err
+	}
+
+	changes := audit.Changes{}
+	changes.Add("email", before.Email, u.Email)
+	changes.Add("username", before.Username, u.Username)
+	changes.Add("role", before.Role, u.Role)
+	changes.Add("firstName", before.FirstName, u.FirstName)
+	changes.Add("middleName", before.MiddleName, u.MiddleName)
+	changes.Add("lastName", before.LastName, u.LastName)
+	if in.Password != nil && *in.Password != "" {
+		// Never the hash, or anything derived from it.
+		changes["password"] = audit.Change{From: nil, To: "changed"}
+	}
+	if len(changes) > 0 {
+		h.audit.Record(r.Context(), admin.ID, audit.UserUpdate, u.FullName, changes)
 	}
 	httpx.WriteJSON(w, http.StatusOK, u)
 	return nil
@@ -191,13 +217,13 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("you cannot delete your own account")
 	}
 
-	role, err := h.store.RoleOf(r.Context(), id)
+	target, err := h.store.Get(r.Context(), id)
 	if err != nil {
 		return err
 	}
 	// Admins cannot remove each other: demoting first makes losing admin access a
 	// deliberate two-step act rather than one tap.
-	if role == string(auth.Admin) {
+	if target.Role == string(auth.Admin) {
 		return httpx.BadRequest("an admin cannot be deleted. Change the role to user first")
 	}
 
@@ -208,6 +234,8 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) error {
 	if !removed {
 		return httpx.ErrNotFound
 	}
+	h.audit.Record(r.Context(), admin.ID, audit.UserDelete, target.FullName,
+		map[string]any{"username": target.Username, "role": target.Role})
 	httpx.NoContent(w, http.StatusNoContent)
 	return nil
 }

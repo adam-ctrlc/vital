@@ -168,11 +168,11 @@ func (s *Store) SuggestUsername(ctx context.Context, first, last string) (string
 }
 
 // Create inserts an account with status (StatusActive when an admin creates it,
-// StatusPending when it registered itself).
-func (s *Store) Create(ctx context.Context, in CreateInput, status string) error {
+// StatusPending when it registered itself) and returns the username it was given.
+func (s *Store) Create(ctx context.Context, in CreateInput, status string) (string, error) {
 	hash, err := auth.HashPassword(in.Password)
 	if err != nil {
-		return httpx.ErrPasswordHash.With(err)
+		return "", httpx.ErrPasswordHash.With(err)
 	}
 
 	username := ""
@@ -181,7 +181,7 @@ func (s *Store) Create(ctx context.Context, in CreateInput, status string) error
 	}
 	if username == "" {
 		if username, err = s.SuggestUsername(ctx, in.FirstName, in.LastName); err != nil {
-			return err
+			return "", err
 		}
 	}
 
@@ -192,9 +192,9 @@ func (s *Store) Create(ctx context.Context, in CreateInput, status string) error
 		uuid.NewString(), CleanEmail(in.Email), username, hash, string(in.Role),
 		trim(in.FirstName), CleanOptional(in.MiddleName), trim(in.LastName), status)
 	if err != nil {
-		return fmt.Errorf("users: create: %w", err)
+		return "", fmt.Errorf("users: create: %w", err)
 	}
-	return nil
+	return username, nil
 }
 
 // Update applies an admin edit and returns the stored row, or httpx.ErrNotFound. A
@@ -234,29 +234,22 @@ func (s *Store) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (User,
 	return u, nil
 }
 
-// Approve activates a pending account and returns it, or httpx.ErrNotFound. Approving
-// an account that is already active changes nothing and is not an error, so a second
-// tap or two admins at once are harmless.
-func (s *Store) Approve(ctx context.Context, id uuid.UUID) (User, error) {
-	_, err := s.db.ExecContext(ctx, `update users set status = 'active', updated_at = `+db.Now+`
+// Approve activates a pending account and returns it, or httpx.ErrNotFound, and
+// reports whether this call is what activated it. Approving an account that is already
+// active changes nothing and is not an error, so a second tap or two admins at once
+// are harmless.
+func (s *Store) Approve(ctx context.Context, id uuid.UUID) (User, bool, error) {
+	res, err := s.db.ExecContext(ctx, `update users set status = 'active', updated_at = `+db.Now+`
 		where id = ?1 and status = 'pending'`, id.String())
 	if err != nil {
-		return User{}, fmt.Errorf("users: approve: %w", err)
+		return User{}, false, fmt.Errorf("users: approve: %w", err)
 	}
-	return s.Get(ctx, id)
-}
-
-// RoleOf returns an account's role, or httpx.ErrNotFound.
-func (s *Store) RoleOf(ctx context.Context, id uuid.UUID) (string, error) {
-	var role string
-	err := s.db.QueryRowContext(ctx, `select role from users where id = ?1`, id.String()).Scan(&role)
-	if db.IsNoRows(err) {
-		return "", httpx.ErrNotFound
-	}
+	n, err := res.RowsAffected()
 	if err != nil {
-		return "", fmt.Errorf("users: role: %w", err)
+		return User{}, false, fmt.Errorf("users: approve: %w", err)
 	}
-	return role, nil
+	u, err := s.Get(ctx, id)
+	return u, n > 0, err
 }
 
 // Delete removes an account and reports whether one was removed.

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/adam-ctrlc/vital/api/internal/audit"
 	"github.com/adam-ctrlc/vital/api/internal/auth"
 	"github.com/adam-ctrlc/vital/api/internal/httpx"
 	"github.com/adam-ctrlc/vital/api/internal/settings"
@@ -16,11 +17,12 @@ type Handler struct {
 	store    *Store
 	settings *settings.Store
 	guard    *auth.Guard
+	audit    *audit.Log
 }
 
-// NewHandler returns the device routes.
-func NewHandler(store *Store, settings *settings.Store, guard *auth.Guard) *Handler {
-	return &Handler{store: store, settings: settings, guard: guard}
+// NewHandler returns the device routes. Relay requests are recorded in log (nil records nothing).
+func NewHandler(store *Store, settings *settings.Store, guard *auth.Guard, log *audit.Log) *Handler {
+	return &Handler{store: store, settings: settings, guard: guard, audit: log}
 }
 
 // Register mounts the routes on mux.
@@ -105,6 +107,11 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request) error {
 
 	admin, _ := auth.IdentityFrom(r.Context())
 	slog.WarnContext(r.Context(), "relay command queued", "user_id", admin.ID.String(), "command", string(cmd))
+	action := audit.RelayClose
+	if cmd == CommandOpen {
+		action = audit.RelayOpen
+	}
+	h.audit.Record(r.Context(), admin.ID, action, "relay", nil)
 
 	httpx.WriteJSON(w, http.StatusOK, Accepted{Accepted: true})
 	return nil

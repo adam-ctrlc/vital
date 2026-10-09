@@ -7,6 +7,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 type harness struct {
 	t       *testing.T
 	srv     *httptest.Server
+	conn    *sql.DB
 	admin   string // admin token
 	adminID uuid.UUID
 }
@@ -56,7 +58,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(srv.Close)
 
 	tok, _ := d.Guard.Issue(adminID, auth.Admin)
-	return &harness{t: t, srv: srv, admin: tok, adminID: adminID}
+	return &harness{t: t, srv: srv, conn: conn, admin: tok, adminID: adminID}
 }
 
 func (h *harness) do(method, path, token, body string) (int, string) {
@@ -240,7 +242,7 @@ func TestSettings(t *testing.T) {
 	}()
 
 	got := h.expect("GET", "/api/v1/settings", user, "", 200, "")
-	if !regexp.MustCompile(`^\{"loadThresholdVa":900\.0,"tripThresholdVa":980\.0,"tempThresholdC":40\.0,"recloseDelaySeconds":30,"tripConfirmSeconds":3,"sourceMode":"hardware","updatedAt":"[^"]+Z"\}$`).MatchString(got) {
+	if !regexp.MustCompile(`^\{"loadThresholdVa":900\.0,"tripThresholdVa":980\.0,"tempThresholdC":40\.0,"recloseDelaySeconds":30,"tripConfirmSeconds":3,"sourceMode":"hardware","energyRatePerKwh":12\.0,"nominalVoltageV":120\.0,"updatedAt":"[^"]+Z"\}$`).MatchString(got) {
 		t.Errorf("settings = %s", got)
 	}
 	h.expect("PUT", "/api/v1/settings", user, `{}`, 403, "")
