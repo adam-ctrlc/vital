@@ -31,6 +31,26 @@ export function update(
   });
 }
 
+/** Sends every stored field back with `patch` applied, since the endpoint takes them together. */
+export function updateWith(
+  token: string,
+  current: Settings,
+  patch: Partial<Pick<Settings, 'energyRatePerKwh' | 'nominalVoltageV'>>
+) {
+  return request<Settings>('/settings', {
+    method: 'PUT',
+    token,
+    body: {
+      loadThresholdVa: current.loadThresholdVa,
+      tripThresholdVa: current.tripThresholdVa,
+      tempThresholdC: current.tempThresholdC,
+      recloseDelaySeconds: current.recloseDelaySeconds,
+      tripConfirmSeconds: current.tripConfirmSeconds,
+      ...patch,
+    },
+  });
+}
+
 export function setSourceMode(token: string, mode: SourceMode) {
   return request<Settings>('/settings/source', {
     method: 'PUT',

@@ -1,11 +1,17 @@
 import {
   BellIcon,
   ChartLineIcon,
+  ClipboardTextIcon,
+  ClockIcon,
+  FileTextIcon,
   GaugeIcon,
   GearIcon,
+  HourglassMediumIcon,
+  LightningIcon,
   SignOutIcon,
   UserCircleIcon,
   UsersIcon,
+  WaveSineIcon,
   type Icon,
 } from '@phosphor-icons/react';
 import { Suspense, useCallback, useEffect, useState } from 'react';
@@ -35,7 +41,14 @@ const TABS: Tab[] = [
   { to: '/dashboard', title: 'Monitor', icon: GaugeIcon },
   { to: '/alerts', title: 'Alerts', icon: BellIcon, dot: 'alerts' },
   { to: '/logs', title: 'Logs', icon: ChartLineIcon, adminOnly: true, dot: 'logs' },
-  { to: '/settings', title: 'Settings', icon: GearIcon, adminOnly: true, also: ['/users'], dot: 'pending' },
+  {
+    to: '/settings',
+    title: 'Settings',
+    icon: GearIcon,
+    adminOnly: true,
+    also: ['/users', '/energy', '/peak-hours', '/power-quality', '/aging', '/reports', '/audit'],
+    dot: 'pending',
+  },
   { to: '/profile', title: 'Profile', icon: UserCircleIcon },
 ];
 
@@ -50,11 +63,23 @@ const SIDEBAR: { title: string; adminOnly?: boolean; items: (Tab & { count?: 'al
     ],
   },
   {
+    title: 'Analysis',
+    adminOnly: true,
+    items: [
+      { to: '/energy', title: 'Energy & cost', icon: LightningIcon },
+      { to: '/peak-hours', title: 'Peak hours', icon: ClockIcon },
+      { to: '/power-quality', title: 'Power quality', icon: WaveSineIcon },
+      { to: '/aging', title: 'Transformer aging', icon: HourglassMediumIcon },
+      { to: '/reports', title: 'Reports', icon: FileTextIcon },
+    ],
+  },
+  {
     title: 'Manage',
     adminOnly: true,
     items: [
       { to: '/settings', title: 'Settings', icon: GearIcon },
       { to: '/users', title: 'User accounts', icon: UsersIcon, count: 'pending' },
+      { to: '/audit', title: 'Audit log', icon: ClipboardTextIcon },
     ],
   },
   {

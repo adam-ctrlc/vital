@@ -2,6 +2,8 @@ import { CaretLeftIcon, type Icon } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 
+import { cn } from '@/lib/utils';
+
 /** The title row at the top of every page. */
 export function PageHeader({
   icon: TitleIcon,
@@ -14,7 +16,8 @@ export function PageHeader({
   iconColor?: string;
   title: ReactNode;
   actions?: ReactNode;
-  back?: { to: string; label: string };
+  /** `mobileOnly` for pages that have their own sidebar link on a wide screen. */
+  back?: { to: string; label: string; mobileOnly?: boolean };
 }) {
   return (
     <header className="flex items-center gap-2">
@@ -22,7 +25,10 @@ export function PageHeader({
         <Link
           to={back.to}
           aria-label={back.label}
-          className="hover:bg-accent -ml-2 grid size-8 place-items-center rounded-full transition-colors">
+          className={cn(
+            'hover:bg-accent -ml-2 grid size-8 place-items-center rounded-full transition-colors',
+            back.mobileOnly && 'md:hidden'
+          )}>
           <CaretLeftIcon size={18} weight="bold" aria-hidden="true" />
         </Link>
       ) : null}

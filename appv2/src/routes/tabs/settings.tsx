@@ -1,4 +1,14 @@
-import { GearIcon, InfoIcon, UsersIcon } from '@phosphor-icons/react';
+import {
+  ClipboardTextIcon,
+  ClockIcon,
+  FileTextIcon,
+  GearIcon,
+  HourglassMediumIcon,
+  InfoIcon,
+  LightningIcon,
+  UsersIcon,
+  WaveSineIcon,
+} from '@phosphor-icons/react';
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 
@@ -128,6 +138,17 @@ export default function SettingsScreen() {
         notice={sourceNotice}
       />
 
+      {/* Wide screens reach these from the sidebar. */}
+      <div className="md:hidden">
+        <SettingsSection title="Analysis">
+          <SettingsRow icon={LightningIcon} iconColor={primary.hex} label="Energy & cost" onClick={() => navigate('/energy')} />
+          <SettingsRow icon={ClockIcon} iconColor={primary.hex} label="Peak hours" onClick={() => navigate('/peak-hours')} />
+          <SettingsRow icon={WaveSineIcon} iconColor={primary.hex} label="Power quality" onClick={() => navigate('/power-quality')} />
+          <SettingsRow icon={HourglassMediumIcon} iconColor={primary.hex} label="Transformer aging" onClick={() => navigate('/aging')} />
+          <SettingsRow icon={FileTextIcon} iconColor={primary.hex} label="Reports" onClick={() => navigate('/reports')} />
+        </SettingsSection>
+      </div>
+
       <SettingsSection title="Administration">
         <SettingsRow
           icon={UsersIcon}
@@ -135,6 +156,7 @@ export default function SettingsScreen() {
           label="User accounts"
           onClick={() => navigate('/users')}
         />
+        <SettingsRow icon={ClipboardTextIcon} iconColor={primary.hex} label="Audit log" onClick={() => navigate('/audit')} />
       </SettingsSection>
 
       <SettingsSection title="Help">

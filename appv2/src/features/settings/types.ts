@@ -23,5 +23,9 @@ export type Settings = {
    */
   tripConfirmSeconds: number;
   sourceMode: SourceMode;
+  /** Pesos per kWh, for the energy cost. */
+  energyRatePerKwh: number;
+  /** What sags and swells are measured against. */
+  nominalVoltageV: number;
   updatedAt: string;
 };

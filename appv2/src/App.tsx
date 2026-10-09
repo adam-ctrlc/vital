@@ -29,6 +29,12 @@ const LogsScreen = lazy(preload(() => import('@/routes/tabs/logs')));
 const SettingsScreen = lazy(preload(() => import('@/routes/tabs/settings')));
 const ProfileScreen = lazy(preload(() => import('@/routes/tabs/profile')));
 const UsersScreen = lazy(preload(() => import('@/routes/users')));
+const EnergyScreen = lazy(preload(() => import('@/routes/analysis/energy')));
+const PeakHoursScreen = lazy(preload(() => import('@/routes/analysis/peak-hours')));
+const PowerQualityScreen = lazy(preload(() => import('@/routes/analysis/power-quality')));
+const AgingScreen = lazy(preload(() => import('@/routes/analysis/aging')));
+const ReportsScreen = lazy(preload(() => import('@/routes/analysis/reports')));
+const AuditScreen = lazy(preload(() => import('@/routes/analysis/audit')));
 
 /** Android's back gesture walks the history, and leaves the app from the first page. */
 function BackButton() {
@@ -87,6 +93,12 @@ export default function App() {
                     <Route path="login" element={<LoginScreen />} />
                     <Route element={<TabsLayout />}>
                       <Route path="users" element={<UsersScreen />} />
+                      <Route path="energy" element={<EnergyScreen />} />
+                      <Route path="peak-hours" element={<PeakHoursScreen />} />
+                      <Route path="power-quality" element={<PowerQualityScreen />} />
+                      <Route path="aging" element={<AgingScreen />} />
+                      <Route path="reports" element={<ReportsScreen />} />
+                      <Route path="audit" element={<AuditScreen />} />
                       <Route path="dashboard" element={<DashboardScreen />} />
                       <Route path="alerts" element={<AlertsScreen />} />
                       <Route path="logs" element={<LogsScreen />} />

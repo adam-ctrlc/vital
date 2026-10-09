@@ -65,10 +65,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       onUnauthorized?.();
     }
 
+    // Some refusals come back as a plain sentence rather than JSON.
+    const plain = payload === null && text.trim() && text.length < 300 && !text.trimStart().startsWith('<') ? text.trim() : null;
     const message =
       payload && typeof payload === 'object' && 'error' in payload
         ? String((payload as { error: unknown }).error)
-        : `request failed with ${response.status}`;
+        : (plain ?? `request failed with ${response.status}`);
     throw new ApiError(response.status, message);
   }
 
