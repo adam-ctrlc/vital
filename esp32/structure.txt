@@ -1,132 +1,27 @@
-VITAL ESP32 firmware layout
-Map of the Arduino sketch: what each file is for, how the modes map to runners,
-and the conventions that dictate the folder shape. Written for a human reader.
+VITAL firmware
 
-COMPILE MODEL
--------------
-Header-only. There are no .cpp files anywhere. esp32.ino includes exactly one runner
-header, which includes the rest of src/, so the whole sketch is a single translation
-unit. Every class lives entirely in one .h with all of its methods defined inside the
-class body (implicitly inline), which is ODR-safe because there is only one translation
-unit. Every header starts with #pragma once.
+esp32.ino            setup() and loop(): starts the protection task and the uplink.
+secrets.example.h    copy to secrets.h (gitignored) with Wi-Fi and API details.
+pins.txt             wiring and hardware notes.
 
-TREE
-----
-esp32.ino                     Thin main: picks ACTIVE_MODE, instantiates one runner, delegates setup/loop.
-secrets.h                     Real Wi-Fi and backend credentials (gitignored, never committed).
-secrets.example.h             Template to copy to secrets.h; documents the four required defines.
-pins.txt                      Board terminal map and the VITAL wiring plan.
-structure.txt                 This file.
-.gitignore                    Keeps secrets.h out of the repo.
-
-src/config/
-  Pins.h                      Single home for every pin number and board wiring constant, with terminal comments.
-
-src/hardware/
-  Lcd.h                       20x4 I2C display wrapper (hd44780), padded no-flicker write, safe no-op when absent.
-  TemperatureProbe.h          DS18B20 async probe, keeps the last good reading, NAN-guards -127 and 85.
-  EnergyMeter.h               PZEM-004T v3 wrapper, reads voltage/current/power/energy/frequency/pf as a struct.
-  Relay.h                     Single relay output with configurable active level, tracks closed/open state.
-
-src/net/
-  BackendClient.h             HTTPS calls to the backend: postReading and postHeartbeat.
-  WifiLink.h            Wi-Fi lifecycle: connects to the fixed compiled Wi-Fi with a bounded timeout.
-
+src/Config.h         pins, relay polarity, timings.
 src/core/
-  Monitor.h                   Overload state machine (threshold, trip, reclose) plus serial publish and LCD screen.
+  Protection         the overload logic: alarm, trip, reclose, lockout. Pure C++.
+  Controller         runs Protection on its own FreeRTOS task: sensors, relay, LCD, flash.
+  Settings           limits, delays and trip state saved in flash (Preferences).
+  Boot               reset reason, brownout count, last relay command id (RTC memory).
+src/hardware/        Sensors (PZEM-004T + DS18B20), Relay, Lcd.
+src/net/
+  Uplink             loop(): posts readings every 5 s, a heartbeat every 30 s.
+  Backend            HTTPS to the API, relay command ids acknowledged.
+  Wifi               non-blocking; the driver reconnects, this only covers it giving up.
+  LiveServer         http://<board>/live for the app on the same network.
 
-src/tests/
-  Ds18b20Test.h               Runner: enumerate the OneWire bus and print raw temperature.
-  LcdTest.h                   Runner: bring up the LCD and cycle through test screens.
-  NetTest.h                   Runner: connect and post a temperature reading to the backend.
-  (core/Main.h)               The real firmware runner: relay always on, reads temp + PZEM, posts to the app, heartbeat.
-  PzemTest.h                  Runner: read the PZEM every 2s and toggle the relay every 10s, printing both over serial.
+tests/
+  protection/        ./run.sh runs the protection logic on a computer.
+  relay, pzem, lcd, ds18b20, net
+                     one sketch per part, for checking the wiring. Open the folder as a
+                     sketch and upload it; flash esp32/ again afterwards.
 
-MODES
------
-Selection is a compile-time #define ACTIVE_MODE in esp32.ino. All src/ code compiles in
-every mode; only the chosen runner is instantiated and run. Suggested flash order after wiring:
-
-Value               Runner class    Purpose
-MODE_LCD_TEST       LcdTest         Flash first after wiring to confirm the display is detected and readable.
-MODE_DS18B20_TEST   Ds18b20Test     Confirm the temperature probe is on the bus and returning sane values.
-MODE_PZEM_TEST      PzemTest        Confirm the PZEM reads over UART and the relay toggles on its pin.
-MODE_NET_TEST       NetTest         Confirm backend connectivity: Wi-Fi join and reading upload.
-MODE_MAIN           Main            The real firmware (src/core/Main.h): relay stays on, reads temp + PZEM, posts readings to the app, sends a device heartbeat.
-
-MODE_NET_TEST is the active mode as shipped.
-
-COMPONENTS
-----------
-Lcd
-  Owns the hd44780 I2C driver. begin() starts the bus on the custom SDA/SCL pins and lets
-  hd44780 auto-detect the backpack address; present() and status() report the result; width() reports
-  the configured columns so callers can lay out a line without reaching for the LCD_COLS macro;
-  show(line1, line2, line3, line4) overwrites every row padded to width with no flicker and is a safe
-  no-op when no LCD is wired. The last two lines default to empty, so the two-line callers (the Wi-Fi
-  states, the test screens) are unchanged and the rows they omit are blanked rather than left stale.
-  formatFloat(value, digits) is a static helper that renders NAN as "--".
-
-TemperatureProbe
-  Owns a OneWire bus and DallasTemperature sensor on one pin. begin() enables the pull-up and starts
-  the async (no-wait) conversion cycle. read() returns the previous conversion, requests the next,
-  and keeps the last good value so a -127 or 85 glitch never overwrites a real temperature.
-
-EnergyMeter
-  Wraps a PZEM-004T v3 on a hardware UART. begin() opens the port at 9600 8N1 on the RX/TX pins.
-  read() returns a Reading struct with voltage, current, power, energy, frequency, and powerFactor.
-
-Relay
-  Owns one output pin with configurable on/off levels (active-low as wired). begin() sets the pin to
-  output and closes the relay. set(closed) drives it; isClosed() reports the tracked state.
-
-WifiLink
-  Owns the Wi-Fi lifecycle for a fixed board. connect() joins the compiled WIFI_SSID/WIFI_PASSWORD
-  from secrets.h with a bounded 15s timeout, and shows the LCD "WiFi connecting" then the SSID and IP
-  on success or "No WiFi" on failure. No NVS store, no multi-network chain, no captive portal, no
-  config sync: the board always targets the one Wi-Fi it was compiled with. Takes only an Lcd.
-
-BackendClient
-  Stateless HTTPS client for the backend, keyed by the x-device-key header. postReading(...) builds
-  a partial JSON body that omits any NAN field and POSTs it to /api/v1/readings. postHeartbeat()
-  reports device telemetry and reads the alarm thresholds back out of the response, which Main
-  persists to NVS and hands to Monitor so an operator threshold change reaches the board.
-
-Monitor
-  Takes references to EnergyMeter, TemperatureProbe, Relay, and Lcd. begin() brings up all four.
-  loop(now) samples on interval, runs the threshold/trip/reclose state machine, publishes a JSON
-  line over serial, and refreshes the LCD. testLoop(now) is the relay-test variant that toggles the
-  relay on a timer and publishes without the state machine. setTestMode() flags the published output.
-  snapshot() returns the latest readings for the networking layer to post.
-
-CONVENTIONS
------------
-Compile scope: the Arduino IDE compiles the sketch at the root plus any .cpp under src/. This sketch
-  has no .cpp: every class is defined inline in its header and pulled in through esp32.ino, so the
-  build is a single translation unit. That is why inline-in-class definitions are ODR-safe here.
-Class idiom: each class owns its hardware and state, takes pins/config through its constructor, and
-  follows the Arduino begin()/loop() pattern. No free functions live outside esp32.ino.
-Shared instances: no globals are defined in the src/ headers. Each runner constructs exactly the
-  objects it needs as members, so hardware a mode does not use is simply never begun. The only global
-  is the single `runner` in esp32.ino for the active mode.
-Secrets: credentials live in gitignored secrets.h, copied from secrets.example.h. Files under src/net
-  reach it as ../../secrets.h. It defines WIFI_SSID, WIFI_PASSWORD, BACKEND_URL, DEVICE_KEY.
-Test twins: each core/hardware class has a runner twin under src/tests that exercises it in isolation.
-Libraries to install (Library Manager):
-  hd44780 by Bill Perry      20x4 I2C LCD, auto-detects the PCF8574 backpack address and mapping.
-  OneWire                    DS18B20 bus.
-  DallasTemperature          DS18B20 temperature conversion.
-  PZEM004Tv30                PZEM-004T v3 energy meter.
-  ArduinoJson by B. Blanchon Version 7 or newer. Builds and reads every JSON payload:
-                             the two backend bodies, the heartbeat reply, and the
-                             serial diagnostic line. Version 7 matters, because 6 and
-                             earlier need a document size at construction and the bare
-                             `JsonDocument doc;` used here will not compile against it.
-Bundled with the ESP32 core (no install): WiFi, Wire, WiFiClientSecure, HTTPClient, HardwareSerial.
-
-Why ArduinoJson rather than string concatenation: the SSID and IP go into the heartbeat
-verbatim, and a quote or backslash in an SSID used to produce malformed JSON the API
-answered with a 400 that read like a broken board. The reply parser it replaced was a
-substring scan that also mismatched a key appearing inside a string value and read a
-serialized exponent such as 1e3 as 1, which would have set a threshold a thousand times
-too low. Both directions now escape and parse properly, and NaN serializes as null.
+Libraries: ArduinoJson, PZEM004Tv30, OneWire, DallasTemperature, hd44780,
+ESP Async WebServer (+ Async TCP). Board: esp32 by Espressif, 3.x.

@@ -1,67 +1,41 @@
 #include "LiveServer.h"
 
-#include <WiFi.h>
+#include <ArduinoJson.h>
+
+static void put(JsonDocument &doc, const char *key, float value, int digits) {
+  if (isnan(value)) {
+    doc[key] = nullptr;
+  } else {
+    doc[key] = serialized(String(value, digits));
+  }
+}
 
 void LiveServer::begin() {
-  server.on("/live", HTTP_GET, [this]() { sendLive(); });
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "content-type");
 
-  // A browser sends the preflight before the request it actually wants, and a missing
-  // answer reads as the board being down.
-  server.onNotFound([this]() {
-    if (server.method() == HTTP_OPTIONS) {
-      cors();
-      server.send(204);
-      return;
-    }
+  server.on("/live", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    const Snapshot s = controller.snapshot();
+    JsonDocument doc;
+    put(doc, "voltageV", s.reading.voltage, 1);
+    put(doc, "currentA", s.reading.current, 2);
+    put(doc, "temperatureC", s.reading.temperature, 1);
+    put(doc, "powerW", s.reading.power, 1);
+    put(doc, "powerFactor", s.reading.powerFactor, 2);
+    put(doc, "frequencyHz", s.reading.frequency, 1);
+    put(doc, "energyKwh", s.reading.energy, 3);
+    doc["status"] = Protection::label(s.state);
+    doc["relay"] = s.relayClosed ? "CLOSED" : "OPEN";
+    doc["uptimeSeconds"] = millis() / 1000;
 
-    cors();
-    server.send(404, "application/json", "{\"error\":\"not found\"}");
+    String body;
+    serializeJson(doc, body);
+    request->send(200, "application/json", body);
+  });
+
+  server.onNotFound([](AsyncWebServerRequest *request) {
+    request->send(request->method() == HTTP_OPTIONS ? 204 : 404);
   });
 
   server.begin();
-  Serial.print("live server on http://");
-  Serial.print(WiFi.localIP());
-  Serial.print(":");
-  Serial.print(PORT);
-  Serial.println("/live");
-}
-
-void LiveServer::cors() {
-  // The app is not a browser and does not need this, but a laptop checking the board
-  // during setup is.
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Access-Control-Allow-Headers", "content-type");
-}
-
-void LiveServer::appendNumber(String &out, const char *key, float value, int digits) {
-  out += "\"";
-  out += key;
-  out += "\":";
-  out += isnan(value) ? String("null") : String(value, digits);
-  out += ",";
-}
-
-void LiveServer::sendLive() {
-  Monitor::Snapshot s = monitor.snapshot();
-
-  String body;
-  body.reserve(320);
-  body += "{";
-  appendNumber(body, "voltageV", s.voltage, 1);
-  appendNumber(body, "currentA", s.current, 2);
-  appendNumber(body, "temperatureC", s.temperature, 1);
-  appendNumber(body, "powerW", s.power, 1);
-  appendNumber(body, "powerFactor", s.powerFactor, 2);
-  appendNumber(body, "frequencyHz", s.frequency, 1);
-  appendNumber(body, "energyKwh", s.energy, 3);
-  body += "\"status\":\"";
-  body += monitor.statusLabel();
-  body += "\",\"relay\":\"";
-  body += monitor.relayClosed() ? "CLOSED" : "OPEN";
-  body += "\",\"uptimeSeconds\":";
-  body += String(millis() / 1000);
-  body += "}";
-
-  cors();
-  server.send(200, "application/json", body);
 }

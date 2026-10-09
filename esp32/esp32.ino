@@ -1,40 +1,19 @@
-// 1 = real firmware (src/core/Main.h): relay on, reads temp + PZEM, posts to the app.
-// 0 = run the TEST_MODE picked below instead.
-#define REAL_MODE 1
+// VITAL board firmware. Hardware bring-up sketches are in tests/.
+#include "src/core/Boot.h"
+#include "src/core/Controller.h"
+#include "src/net/Uplink.h"
 
-#define TEST_DS18B20 1
-#define TEST_NET 2
-#define TEST_LCD 3
-#define TEST_PZEM 4
-#define TEST_MODE TEST_NET
-
-#if REAL_MODE
-
-#include "src/core/Main.h"
-Main runner;
-
-#else
-
-#if TEST_MODE == TEST_DS18B20
-#include "src/tests/Ds18b20Test.h"
-Ds18b20Test runner;
-#elif TEST_MODE == TEST_LCD
-#include "src/tests/LcdTest.h"
-LcdTest runner;
-#elif TEST_MODE == TEST_PZEM
-#include "src/tests/PzemTest.h"
-PzemTest runner;
-#else
-#include "src/tests/NetTest.h"
-NetTest runner;
-#endif
-
-#endif
+Controller controller;
+Uplink uplink(controller);
 
 void setup() {
-  runner.begin();
+  Serial.begin(115200);
+  Boot::begin();
+  controller.begin();
+  uplink.begin();
 }
 
 void loop() {
-  runner.loop();
+  uplink.loop();
+  delay(10);
 }

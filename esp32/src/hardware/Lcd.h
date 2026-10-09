@@ -5,40 +5,31 @@
 #include <hd44780.h>
 #include <hd44780ioClass/hd44780_I2Cexp.h>
 
+#include "../Config.h"
+
+// Only the protection task may write to it: two tasks on one I2C bus corrupt each other.
 class Lcd {
  public:
-  Lcd(uint8_t sda, uint8_t scl, uint8_t cols, uint8_t rows);
+  void begin() {
+    Wire.begin(LCD_SDA_PIN, LCD_SCL_PIN);
+    present_ = lcd.begin(LCD_COLS, LCD_ROWS) == 0;
+    if (present_) lcd.backlight();
+    Serial.println(present_ ? "LCD found" : "no LCD");
+  }
 
-  /// Brings up the PCF8574 backpack on the custom I2C pins. hd44780 auto-detects the
-  /// address and register mapping, so this just starts the bus. A nonzero status leaves
-  /// present() false, which makes every show() a safe no-op with no LCD wired.
-  void begin();
-
-  bool present() const { return present_; }
-  int status() const { return status_; }
-
-  /// Taken from here rather than the LCD_COLS macro, so callers laying out a line do
-  /// not depend on Pins.h being included first.
-  uint8_t width() const { return cols; }
-
-  /// Overwrites every row in place, padding to cols with spaces instead of clearing, so
-  /// the display does not flicker between updates. The last two lines are optional and
-  /// blanked when omitted, for the callers with only two things to say.
-  void show(const String &line1, const String &line2, const String &line3 = String(),
-            const String &line4 = String());
-
-  static String formatFloat(float value, int digits);
+  // Pads instead of clearing, so nothing flickers.
+  template <size_t N>
+  void show(const char (&rows)[LCD_ROWS][N]) {
+    if (!present_) return;
+    char line[LCD_COLS + 1];
+    for (uint8_t row = 0; row < LCD_ROWS; row++) {
+      snprintf(line, sizeof line, "%-*.*s", LCD_COLS, LCD_COLS, rows[row]);
+      lcd.setCursor(0, row);
+      lcd.print(line);
+    }
+  }
 
  private:
-  /// Ceiling on the rows show() can address, and the bound on its pointer array. Four
-  /// covers every HD44780 geometry the library drives.
-  static constexpr uint8_t MAX_ROWS = 4;
-
-  uint8_t sdaPin;
-  uint8_t sclPin;
-  uint8_t cols;
-  uint8_t rows;
-  bool present_;
-  int status_;
   hd44780_I2Cexp lcd;
+  bool present_ = false;
 };

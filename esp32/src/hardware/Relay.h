@@ -2,25 +2,24 @@
 
 #include <Arduino.h>
 
+#include "../Config.h"
+
 class Relay {
  public:
-  Relay(uint8_t pin, uint8_t onLevel, uint8_t offLevel);
+  void begin() {
+    pinMode(RELAY_PIN, OUTPUT);
+    set(false);
+  }
 
-  /// Comes up open. The load stays disconnected until Monitor has measured something
-  /// and judged it safe, a second later. Closing here would energize on faith, and on a
-  /// board restored into a trip it would re-close into the fault first.
-  void begin();
+  // Called every pass, so a write lost to noise or a brownout is corrected.
+  void set(bool closed) {
+    closed_ = closed;
+    const bool high = RELAY_VIA_TRANSISTOR ? closed : !closed;
+    digitalWrite(RELAY_PIN, high ? HIGH : LOW);
+  }
 
-  void set(bool closed);
-
-  bool isClosed() const { return closed_; }
-
-  /// Which pin it drives, so a caller can name it in a log without holding the pin map.
-  uint8_t number() const { return pin; }
+  bool closed() const { return closed_; }
 
  private:
-  uint8_t pin;
-  uint8_t onLevel;
-  uint8_t offLevel;
-  bool closed_;
+  bool closed_ = false;
 };

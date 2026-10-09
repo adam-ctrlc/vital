@@ -1,155 +1,28 @@
-ESP32 DevKit (38 pin) on screw terminal breakout board
-Terminal labels as printed on the board, top to bottom, with the ESP32 pin they map to.
+VITAL wiring (ESP32 DevKit 38-pin on a screw-terminal board)
 
-LEFT STRIP
-----------
-Label   ESP32 pin       Notes
-3V3     3.3V out        Regulated 3.3V (white wire currently here)
-EN      EN              Reset, pull low to reset the chip
-SVP     GPIO36          Input only, no internal pull ups, ADC1_CH0
-SVN     GPIO39          Input only, ADC1_CH3
-P34     GPIO34          Input only, ADC1_CH6
-P35     GPIO35          Input only, ADC1_CH7
-P32     GPIO32          Free, ADC1_CH4, touch
-P33     GPIO33          Free, ADC1_CH5, touch
-P25     GPIO25          Free, DAC1, ADC2
-P26     GPIO26          Free, DAC2, ADC2
-P27     GPIO27          Free, ADC2, touch
-P14     GPIO14          Free, ADC2 (HSPI CLK)
-P12     GPIO12          Strapping pin, must be low at boot, avoid outputs that pull high
-GND     Ground          (brown wire currently here)
-P13     GPIO13          Free, ADC2 (HSPI MOSI)
-SD2     GPIO9           Internal flash, never use
-SD3     GPIO10          Internal flash, never use
-CMD     GPIO11          Internal flash, never use (printed blurry, position is CMD)
-5V      5V (VIN)        5V from USB, or 5V input when powered externally
+Part             Pin      Terminal  Notes
+PZEM-004T TX     GPIO16   P16       UART2 RX
+PZEM-004T RX     GPIO17   P17       UART2 TX
+PZEM-004T VCC    3V3                3.3 V keeps its TX inside the ESP32's input range
+DS18B20 data     GPIO32   P32       red to 3V3, black to GND
+LCD SDA / SCL    GPIO13 / GPIO14    P13 / P14, VCC to 5V
+Relay IN         GPIO18   P18       through an NPN (see below), module VCC to 5V
 
-RIGHT STRIP
------------
-Label   ESP32 pin       Notes
-GND     Ground
-P23     GPIO23          Free (VSPI MOSI)
-P22     GPIO22          Free, common I2C SCL
-TX      GPIO1 (TX0)     USB serial log output, avoid
-RX      GPIO3 (RX0)     USB serial input, avoid
-P21     GPIO21          Free, common I2C SDA
-GND     Ground
-P19     GPIO19          Free (VSPI MISO)
-P18     GPIO18          Reserved here for the relay (VSPI CLK)
-P5      GPIO5           Strapping pin, free (VSPI CS)
-P17     GPIO17 (TX2)    Free, hardware UART2 TX
-P16     GPIO16 (RX2)    Free, hardware UART2 RX
-P4      GPIO4           Free, ADC2, touch
-P0      GPIO0           Boot strapping pin, avoid
-P2      GPIO2           Strapping pin, onboard LED, light use only
-P15     GPIO15          Strapping pin, usable, must be high at boot
-SD1     GPIO8           Internal flash, never use
-SD0     GPIO7           Internal flash, never use
-CLK     GPIO6           Internal flash, never use
+Relay: P18 -> 4.7k -> NPN base (2N2222/BC547), collector -> module IN, emitter -> GND.
+  A 3.3 V pin cannot switch this 5 V module off by itself. Set RELAY_VIA_TRANSISTOR in
+  src/Config.h to match (1 with the NPN, 0 if IN is wired straight to P18).
+  Load: live through COM and NO, so an unpowered or booting board leaves it off.
 
-USABLE PINS
------------
-Label   ESP32 pin       Notes
-P21     GPIO21          Fully free
-P22     GPIO22          Fully free
-P23     GPIO23          Fully free
-P19     GPIO19          Fully free
-P18     GPIO18          Fully free
-P32     GPIO32          Fully free, reserved here for the DS18B20
-P33     GPIO33          Fully free
-P25     GPIO25          Fully free
-P26     GPIO26          Fully free
-P27     GPIO27          Fully free
-P14     GPIO14          Fully free, reserved here for the LCD I2C SCL
-P13     GPIO13          Fully free, reserved here for the LCD I2C SDA
-P4      GPIO4           Fully free
-P16     GPIO16 (RX2)    Fully free, reserved here for the PZEM-004T
-P17     GPIO17 (TX2)    Fully free, reserved here for the PZEM-004T
-P18     GPIO18          Fully free, reserved here for the relay
-P15     GPIO15          With care, strapping, must be high at boot, fine after
-P2      GPIO2           With care, strapping, onboard LED, light use only
-SVP     GPIO36          Input only, good for analog sensors (ADC1)
-SVN     GPIO39          Input only, good for analog sensors (ADC1)
-P34     GPIO34          Input only, good for analog sensors (ADC1)
-P35     GPIO35          Input only, good for analog sensors (ADC1)
+Avoid: GPIO6-11 (flash), GPIO0/2/5/12/15 (boot strapping), GPIO1/3 (USB serial),
+GPIO34-39 (input only). ADC2 pins do not read analog while Wi-Fi is on.
 
-RULES OF THUMB
---------------
-Never touch: SD0, SD1, SD2, SD3, CLK, CMD (GPIO6 to GPIO11, wired to the module flash).
-Input only (no outputs, no pull ups): SVP (36), SVN (39), P34, P35.
-Strapping pins (state at boot matters): P0, P2, P5, P12, P15.
-ADC2 pins (25, 26, 27, 14, 12, 13, 4, 2, 15) cannot do analogRead while Wi-Fi is on; use ADC1 (32, 33, 34, 35, 36, 39) for analog sensors.
-
-VITAL WIRING PLAN
---------------------
-PZEM-004T v3 (energy meter, UART):
-  PZEM TX  -> P16 (RX2)
-  PZEM RX  -> P17 (TX2)
-  PZEM VCC -> 3V3
-  PZEM GND -> GND
-  Note: the logic side runs on 3.3V, not 5V, and that is what makes the direct
-        connection safe. The module's TX idles at whatever rail it is powered
-        from, so on 3.3V it sits inside the ESP32's input range and no level
-        shifter or divider is needed between TX and P16. Powered from 5V it
-        would idle at 5V into a 3.3V only pin, which is the arrangement the
-        level shifter used to be there for.
-  Note: this is the mains isolated side only. The PZEM's measuring side stays on
-        the live conductor with its current transformer, and the opto isolation
-        between the two is what keeps this rail safe to touch.
-  Note: verified working on this board. Some PZEM units are fussier about a 3.3V
-        supply than others, so if a rebuilt board returns zeros or NaN from the
-        meter while the probe still reads, suspect the supply before the wiring.
-
-DS18B20 (temperature):
-  Yellow (DATA) -> P32
-  Red (VCC)     -> 3V3
-  Black (GND)   -> GND
-  Note: internal pull up on P32 (INPUT_PULLUP) drives the bus, no external resistor needed.
-
-20x4 I2C LCD (PCF8574 backpack):
-  VCC -> 5V
-  GND -> GND
-  SDA -> P13
-  SCL -> P14
-  Note: SDA/SCL are custom I2C pins set via Wire.begin(13, 14), chosen so the four
-        wires cluster next to the left-strip 5V and GND terminals for short runs.
-  Note: hd44780 auto-detects the backpack I2C address and register mapping and
-        drives whichever answers, so no address jumper guessing is needed.
-
-Relay module (load switching, active low, driven through an NPN):
-  P18 -> 4.7k -> NPN base      (2N2222, BC547 or similar)
-  NPN collector -> module IN
-  NPN emitter   -> GND
-  VCC -> 5V
-  GND -> GND, shared with the ESP32
-  Why: a 3.3V pin cannot switch this module off. IN is pulled up to 5V inside the
-       module, so driving it to 3.3V leaves 1.7V across the opto LED. It keeps
-       conducting, the input LED glows dim rather than going dark, and near the
-       threshold it chatters. Pulling low always worked; it was the off state that
-       could not be reached.
-  The transistor never sources 5V. It gets out of the way and lets the module's own
-       pull-up take IN to the full rail, which is the one thing the pin could not do.
-  Base resistor: 4.7k gives about 0.55 mA of base current, a forced gain near 9 for a
-       5 mA input. Saturated with room to spare, and five times gentler on the pin
-       than the 1k usually quoted. Optional 10k from base to emitter if you want the
-       base held down while the pin floats.
-  Polarity: RELAY_VIA_TRANSISTOR in Pins.h must be 1 for this wiring. It inverts
-       RELAY_ON to HIGH. Set to 0 only if IN is wired straight to P18. Getting it
-       wrong closes the relay exactly when the firmware believes it is open.
-  Boot: before pinMode() runs the pin is high impedance, so no base current, so the
-       transistor is off and the load is de-energized from the moment power arrives.
-  Load: live line through COM and NO, so an unpowered or still booting board
-        leaves the load de-energized.
-  Note: active low. Pins.h sets RELAY_ON to LOW and RELAY_OFF to HIGH, which is
-        what most opto-isolated single channel boards expect.
-  Note: P18 is an ordinary GPIO with none of the boot-time behaviour the
-        strapping pins have. It was moved here from P5, which is a strapping pin
-        that some boards pulse at power up; on an active low module that pulse
-        can close the contacts for an instant before setup() has run, which is
-        the one thing a protection relay must never do.
-  Note: some boards emit a brief pulse on GPIO5 at power up. Depending on the
-        module's input stage that can produce an audible click. Worth a scope
-        check on real hardware; it is not a design fault.
-  Note: the firmware closes the relay in Relay::begin() and never reopens it.
-        Monitor's NORMAL/WARNING/OVERLOAD machine drives the LCD, the serial
-        line and the backend alert only. See structure.txt.
+Hardware fixes for resets and Wi-Fi drops (firmware cannot fix these):
+- Power the board from a solid 5 V 2 A supply, not a laptop USB port, and put a
+  470-1000 uF capacitor across 5V and GND near the ESP32. Wi-Fi bursts and the relay
+  coil share that rail; a dip resets the board (it then reports "brownout").
+- Put an RC snubber (or a MOV) across the relay contacts. Switching the transformer
+  makes a spark whose noise can reset the ESP32 or drop Wi-Fi.
+- Keep the mains wiring away from the ESP32, LCD and sensor wires.
+- Add a 4.7k resistor from DS18B20 data to 3V3; the internal pull-up is too weak for
+  long wires.
+- If the LCD backpack has pull-ups to 5V on SDA/SCL, remove them or use a level shifter.
