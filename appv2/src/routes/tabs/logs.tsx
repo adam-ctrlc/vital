@@ -366,7 +366,9 @@ export default function LogsScreen() {
           onValueChange={setSource}
           size="sm"
         />
-        <div className="flex items-center gap-3">
+        {/* Full width once the row wraps on a phone, with the toggle and the button at
+            opposite ends; beside the source switch on a wider screen. */}
+        <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
           <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
             Overloads only
             <Switch aria-label="Overloads only" checked={onlyOverload} onCheckedChange={setOnlyOverload} />
