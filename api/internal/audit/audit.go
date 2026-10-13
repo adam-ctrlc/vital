@@ -26,6 +26,7 @@ const (
 	UserApprove     = "user.approve"
 	AccountUpdate   = "account.update"
 	AccountPassword = "account.password"
+	AccountAvatar   = "account.avatar"
 )
 
 // Change is one field's before and after.

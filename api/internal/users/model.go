@@ -24,15 +24,17 @@ type User struct {
 	ID uuid.UUID `json:"id"`
 	// Email is nil for an account created without one; the username is the identity
 	// the system relies on.
-	Email      *string   `json:"email"`
-	Username   string    `json:"username"`
-	Role       string    `json:"role"`
-	FirstName  string    `json:"firstName"`
-	MiddleName *string   `json:"middleName"`
-	LastName   string    `json:"lastName"`
-	FullName   string    `json:"fullName"`
-	Status     string    `json:"status"`
-	CreatedAt  wire.Time `json:"createdAt"`
+	Email      *string `json:"email"`
+	Username   string  `json:"username"`
+	Role       string  `json:"role"`
+	FirstName  string  `json:"firstName"`
+	MiddleName *string `json:"middleName"`
+	LastName   string  `json:"lastName"`
+	FullName   string  `json:"fullName"`
+	// Avatar is the profile picture as a data URL, or nil when none is set.
+	Avatar    *string   `json:"avatar"`
+	Status    string    `json:"status"`
+	CreatedAt wire.Time `json:"createdAt"`
 }
 
 // CreateInput is the body of POST /users, and what registration creates.

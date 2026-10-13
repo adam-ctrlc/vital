@@ -17,7 +17,7 @@ import (
 )
 
 // credentialColumns is what every account lookup selects, in scanCredentials' order.
-const credentialColumns = "id, email, username, password_hash, role, first_name, middle_name, last_name, status"
+const credentialColumns = "id, email, username, password_hash, role, first_name, middle_name, last_name, avatar, status"
 
 // credentials is an account with its password hash, which never leaves this package.
 type credentials struct {
@@ -29,6 +29,7 @@ type credentials struct {
 	firstName    string
 	middleName   *string
 	lastName     string
+	avatar       *string
 	status       string
 }
 
@@ -43,6 +44,8 @@ type Profile struct {
 	MiddleName *string   `json:"middleName"`
 	LastName   string    `json:"lastName"`
 	FullName   string    `json:"fullName"`
+	// Avatar is the profile picture as a data URL, or nil when none is set.
+	Avatar *string `json:"avatar"`
 }
 
 func (c credentials) profile(role auth.Role) Profile {
@@ -50,6 +53,7 @@ func (c credentials) profile(role auth.Role) Profile {
 		ID: c.id, Email: c.email, Username: c.username, Role: role,
 		FirstName: c.firstName, MiddleName: c.middleName, LastName: c.lastName,
 		FullName: users.FullName(c.firstName, c.middleName, c.lastName),
+		Avatar:   c.avatar,
 	}
 }
 
@@ -71,8 +75,9 @@ func scanCredentials(row *sql.Row) (credentials, bool, error) {
 		c             credentials
 		id            string
 		email, middle sql.NullString
+		avatar        sql.NullString
 	)
-	err := row.Scan(&id, &email, &c.username, &c.passwordHash, &c.role, &c.firstName, &middle, &c.lastName, &c.status)
+	err := row.Scan(&id, &email, &c.username, &c.passwordHash, &c.role, &c.firstName, &middle, &c.lastName, &avatar, &c.status)
 	if db.IsNoRows(err) {
 		return credentials{}, false, nil
 	}
@@ -87,6 +92,9 @@ func scanCredentials(row *sql.Row) (credentials, bool, error) {
 	}
 	if middle.Valid {
 		c.middleName = &middle.String
+	}
+	if avatar.Valid {
+		c.avatar = &avatar.String
 	}
 	return c, true, nil
 }
@@ -121,6 +129,23 @@ func (s store) updateProfile(ctx context.Context, id uuid.UUID, first string, mi
 		where id = ?6
 		returning `+credentialColumns,
 		first, middle, last, email, username, id.String()))
+	if err != nil {
+		return credentials{}, err
+	}
+	if !found {
+		return credentials{}, httpx.ErrNotFound
+	}
+	return c, nil
+}
+
+// setAvatar stores a validated data URL, or clears the picture when avatar is nil, and
+// returns the stored row.
+func (s store) setAvatar(ctx context.Context, id uuid.UUID, avatar *string) (credentials, error) {
+	c, found, err := scanCredentials(s.db.QueryRowContext(ctx, `update users
+		set avatar = ?1, updated_at = `+db.Now+`
+		where id = ?2
+		returning `+credentialColumns,
+		avatar, id.String()))
 	if err != nil {
 		return credentials{}, err
 	}

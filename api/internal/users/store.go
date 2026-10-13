@@ -17,7 +17,7 @@ import (
 
 // columns is what every query that builds a User selects, in scanUser's order.
 // full_name is composed in Go (FullName) rather than in SQL, so it has one definition.
-const columns = "id, email, username, role, first_name, middle_name, last_name, created_at, status"
+const columns = "id, email, username, role, first_name, middle_name, last_name, avatar, created_at, status"
 
 // Store is the users table.
 type Store struct {
@@ -32,8 +32,9 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 		u             User
 		id, createdAt string
 		email, middle sql.NullString
+		avatar        sql.NullString
 	)
-	if err := row.Scan(&id, &email, &u.Username, &u.Role, &u.FirstName, &middle, &u.LastName, &createdAt, &u.Status); err != nil {
+	if err := row.Scan(&id, &email, &u.Username, &u.Role, &u.FirstName, &middle, &u.LastName, &avatar, &createdAt, &u.Status); err != nil {
 		return User{}, err
 	}
 	parsed, err := uuid.Parse(id)
@@ -47,6 +48,7 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	u.ID = parsed
 	u.Email = nullable(email)
 	u.MiddleName = nullable(middle)
+	u.Avatar = nullable(avatar)
 	u.FullName = FullName(u.FirstName, u.MiddleName, u.LastName)
 	u.CreatedAt = wire.Time{Time: at}
 	return u, nil

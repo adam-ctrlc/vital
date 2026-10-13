@@ -158,7 +158,7 @@ func TestAccountLifecycle(t *testing.T) {
 	if err := json.Unmarshal([]byte(login), &resp); err != nil {
 		t.Fatal(err)
 	}
-	wantUser := `"user":{"id":"` + id + `","email":"juan@example.com","username":"jdelacruz","role":"user","firstName":"Juan","middleName":null,"lastName":"Dela Cruz","fullName":"Juan Dela Cruz"}}`
+	wantUser := `"user":{"id":"` + id + `","email":"juan@example.com","username":"jdelacruz","role":"user","firstName":"Juan","middleName":null,"lastName":"Dela Cruz","fullName":"Juan Dela Cruz","avatar":null}}`
 	if !strings.HasPrefix(login, `{"token":"`) || !strings.HasSuffix(login, wantUser) {
 		t.Errorf("login = %s", login)
 	}

@@ -60,6 +60,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET "+p+"/me", h.guard.User(httpx.HandlerFunc(h.me)))
 	mux.Handle("PUT "+p+"/me", h.guard.User(httpx.HandlerFunc(h.updateMe)))
 	mux.Handle("PUT "+p+"/password", h.guard.User(httpx.HandlerFunc(h.changePassword)))
+	mux.Handle("PUT "+p+"/me/avatar", h.guard.User(httpx.HandlerFunc(h.setAvatar)))
+	mux.Handle("DELETE "+p+"/me/avatar", h.guard.User(httpx.HandlerFunc(h.removeAvatar)))
 }
 
 type loginRequest struct {

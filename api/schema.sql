@@ -31,6 +31,8 @@ create table if not exists users (
     first_name    text not null default '',
     middle_name   text,
     last_name     text not null default '',
+    -- Profile picture as a data URL (data:image/webp;base64,...), at most 100 KB decoded.
+    avatar        text,
     created_at    text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at    text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
