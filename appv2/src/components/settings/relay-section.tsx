@@ -2,6 +2,7 @@ import { PowerIcon, WarningIcon } from '@phosphor-icons/react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
+import { Callout, type CalloutTone } from '@/components/ui/callout';
 import { Segmented } from '@/components/ui/segmented';
 import { SettingsSection } from '@/components/ui/settings-list';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -74,6 +75,7 @@ export function RelaySection() {
    */
   const [awaiting, setAwaiting] = useState<{ closed: boolean; until: number } | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [problem, setProblem] = useState<{ tone: CalloutTone; title: string; description?: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -105,6 +107,7 @@ export function RelaySection() {
   async function send(command: 'open' | 'close') {
     setSending(command);
     setNote(null);
+    setProblem(null);
     try {
       await deviceApi.relay(token ?? '', command);
       // Not "done". The board has to come and ask, which it does every few seconds
@@ -118,7 +121,7 @@ export function RelaySection() {
       setAwaiting({ closed: command === 'close', until: Date.now() + AWAITING_TIMEOUT_MS });
       await load();
     } catch (caught) {
-      setNote((caught as Error).message);
+      setProblem({ tone: 'destructive', title: 'Could not send the command', description: (caught as Error).message });
       // Nothing was queued, so there is nothing to wait for.
       setAwaiting(null);
     } finally {
@@ -148,9 +151,12 @@ export function RelaySection() {
     const timer = setTimeout(
       () => {
         setAwaiting(null);
-        setNote(
-          'The board has not reported the change. It may be offline, or the close was refused because the protection undid one moments ago.'
-        );
+        setNote(null);
+        setProblem({
+          tone: 'warning',
+          title: 'The board has not reported the change',
+          description: 'It may be offline, or the close was refused because the protection undid one moments ago.',
+        });
       },
       Math.max(0, awaiting.until - Date.now())
     );
@@ -202,62 +208,65 @@ export function RelaySection() {
   const tone = open ? danger : primary.hex;
 
   return (
-    <SettingsSection title="Relay" footer={note}>
-      <div className="flex items-center gap-3 p-4">
-        <span
-          className="grid size-10 shrink-0 place-items-center rounded-full"
-          style={{ backgroundColor: `${tone}1f` }}>
-          <PowerIcon size={20} weight="fill" color={tone} aria-hidden="true" />
-        </span>
-        <div className="min-w-0 flex-1">
-          {/* The relay's position, not a claim about what is plugged into it. */}
-          <p className="text-sm font-semibold" style={open ? { color: danger } : undefined}>
-            {unknown
-              ? 'Position unknown'
-              : lockedOut
-                ? 'Locked out'
-                : open
-                  ? 'Supply cut'
-                  : 'Supply connected'}
-          </p>
-          {statusNote ? <p className="text-muted-foreground text-xs">{statusNote}</p> : null}
+    <>
+      <SettingsSection title="Relay" footer={note}>
+        <div className="flex items-center gap-3 p-4">
+          <span
+            className="grid size-10 shrink-0 place-items-center rounded-full"
+            style={{ backgroundColor: `${tone}1f` }}>
+            <PowerIcon size={20} weight="fill" color={tone} aria-hidden="true" />
+          </span>
+          <div className="min-w-0 flex-1">
+            {/* The relay's position, not a claim about what is plugged into it. */}
+            <p className="text-sm font-semibold" style={open ? { color: danger } : undefined}>
+              {unknown
+                ? 'Position unknown'
+                : lockedOut
+                  ? 'Locked out'
+                  : open
+                    ? 'Supply cut'
+                    : 'Supply connected'}
+            </p>
+            {statusNote ? <p className="text-muted-foreground text-xs">{statusNote}</p> : null}
+          </div>
+          {loading ? (
+            <Skeleton className="h-5 w-16 rounded-full" />
+          ) : (
+            <Badge variant={unknown ? 'outline' : open ? 'destructive' : 'secondary'}>
+              {unknown ? 'UNKNOWN' : open ? 'OPEN' : 'CLOSED'}
+            </Badge>
+          )}
         </div>
-        {loading ? (
-          <Skeleton className="h-5 w-16 rounded-full" />
-        ) : (
-          <Badge variant={unknown ? 'outline' : open ? 'destructive' : 'secondary'}>
-            {unknown ? 'UNKNOWN' : open ? 'OPEN' : 'CLOSED'}
-          </Badge>
-        )}
-      </div>
 
-      {stuck ? (
-        <div className="flex items-center gap-2 p-4" style={{ backgroundColor: `${danger}14`, color: danger }}>
-          <WarningIcon size={14} weight="fill" aria-hidden="true" />
-          <p className="flex-1 text-xs">
-            Open, but {current?.toFixed(2)} A is still flowing. Check the contacts.
-          </p>
+        {stuck ? (
+          <div className="flex items-center gap-2 p-4" style={{ backgroundColor: `${danger}14`, color: danger }}>
+            <WarningIcon size={14} weight="fill" aria-hidden="true" />
+            <p className="flex-1 text-xs">
+              Open, but {current?.toFixed(2)} A is still flowing. Check the contacts.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="p-4">
+          {loading ? (
+            <Skeleton className="h-10 w-full rounded-full" />
+          ) : (
+            <Segmented
+              aria-label="Relay"
+              // Disabled per option, so the row still shows which position the relay is in
+              // when there is nothing to change.
+              options={RELAY_OPTIONS.map((option) => ({
+                ...option,
+                disabled: !canControl || sending !== null || awaiting !== null,
+              }))}
+              value={open ? 'open' : 'closed'}
+              onValueChange={(next) => void send(next === 'closed' ? 'close' : 'open')}
+              fill
+            />
+          )}
         </div>
-      ) : null}
-
-      <div className="p-4">
-        {loading ? (
-          <Skeleton className="h-10 w-full rounded-full" />
-        ) : (
-          <Segmented
-            aria-label="Relay"
-            // Disabled per option, so the row still shows which position the relay is in
-            // when there is nothing to change.
-            options={RELAY_OPTIONS.map((option) => ({
-              ...option,
-              disabled: !canControl || sending !== null || awaiting !== null,
-            }))}
-            value={open ? 'open' : 'closed'}
-            onValueChange={(next) => void send(next === 'closed' ? 'close' : 'open')}
-            fill
-          />
-        )}
-      </div>
-    </SettingsSection>
+      </SettingsSection>
+      {problem ? <Callout tone={problem.tone} title={problem.title} description={problem.description} /> : null}
+    </>
   );
 }

@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Button } from '@/components/ui/button';
+import { Callout } from '@/components/ui/callout';
 import { IconInput } from '@/components/ui/icon-input';
 import { SettingsRow, SettingsSection } from '@/components/ui/settings-list';
 import { Slider } from '@/components/ui/slider';
@@ -330,7 +331,7 @@ function ThresholdsSheet({
           The alarm raises an alert. The trip cuts the load, so keep it above the alarm.
         </p>
 
-        {error ? <p className="text-destructive text-sm">{error}</p> : null}
+        {error ? <Callout tone="destructive" title="Could not save" description={error} /> : null}
 
         {/* Submits the form, so Enter in any field saves too. */}
         <SheetActions busy={busy} canSave={dirty} onCancel={onClose} />
@@ -400,7 +401,7 @@ function DelaySheet({
         onValueChange={setDraft}
       />
 
-      {error ? <p className="text-destructive text-sm">{error}</p> : null}
+      {error ? <Callout tone="destructive" title="Could not save" description={error} /> : null}
 
       <SheetActions
         busy={busy}

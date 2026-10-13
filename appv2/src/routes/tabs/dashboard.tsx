@@ -14,6 +14,7 @@ import { PowerPanel } from '@/components/ac/power-panel';
 import { AcWaveform } from '@/components/ac/waveform';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Callout } from '@/components/ui/callout';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { TileRow } from '@/components/ui/tile-row';
 import { UserAvatar } from '@/components/user-avatar';
@@ -261,10 +262,7 @@ export default function DashboardScreen() {
       <PowerPanel data={data} accent={ac} />
 
       {error ? (
-        <Card className="gap-1 p-3" role="alert">
-          <p className="text-destructive text-sm font-semibold">Cannot reach the API</p>
-          <p className="text-muted-foreground text-xs">{error.message}</p>
-        </Card>
+        <Callout tone="destructive" title="Could not load the readings" description={error.message} />
       ) : null}
 
     </>

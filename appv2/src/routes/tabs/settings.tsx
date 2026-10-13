@@ -17,6 +17,7 @@ import { DeviceSection, type DeviceNotice } from '@/components/settings/device-s
 import { ProtectionSection } from '@/components/settings/protection-section';
 import { RelaySection } from '@/components/settings/relay-section';
 import { SourceModeModal } from '@/components/source-mode-modal';
+import { Callout } from '@/components/ui/callout';
 import { PageHeader } from '@/components/ui/page-header';
 import { SettingsRow, SettingsSection } from '@/components/ui/settings-list';
 import { useAuth } from '@/features/auth/context';
@@ -124,7 +125,7 @@ export default function SettingsScreen() {
     <>
       <PageHeader icon={GearIcon} iconColor={primary.hex} title="Settings" />
 
-      {loadError ? <p className="text-destructive text-sm">{loadError}</p> : null}
+      {loadError ? <Callout tone="destructive" title="Could not load the settings" description={loadError} /> : null}
 
       <RelaySection />
 
