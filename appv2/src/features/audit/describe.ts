@@ -83,6 +83,10 @@ export function describeAction(event: AuditEvent): string {
     }
     case 'account.password':
       return 'changed their password';
+    case 'account.avatar': {
+      const avatar = detail.avatar as { to?: unknown } | undefined;
+      return avatar?.to ? 'changed their profile picture' : 'removed their profile picture';
+    }
     default:
       return event.action;
   }

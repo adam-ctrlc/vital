@@ -13,6 +13,7 @@ export type ManagedUser = {
   /** `pending` for a self-registered account until an admin approves it. */
   status: 'pending' | 'active';
   createdAt: string;
+  avatar: string | null;
 };
 
 export type NewUser = {

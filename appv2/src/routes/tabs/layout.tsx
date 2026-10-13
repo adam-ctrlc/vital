@@ -20,6 +20,7 @@ import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router';
 import { ConfirmModal } from '@/components/confirm-modal';
 import { TabIcon } from '@/components/tab-icon';
 import { AppLoading } from '@/components/app-loading';
+import { UserAvatar } from '@/components/user-avatar';
 import { useAuth } from '@/features/auth/context';
 import { NotificationsProvider, useNotifications } from '@/features/notifications/context';
 import * as usersApi from '@/features/users/api';
@@ -230,10 +231,6 @@ function Sidebar({ isAdmin, pendingAccounts }: { isAdmin: boolean; pendingAccoun
   const { pathname } = useLocation();
   const [confirming, setConfirming] = useState(false);
 
-  const initials =
-    `${user?.firstName?.[0] ?? ''}${user?.lastName?.[0] ?? ''}`.toUpperCase() ||
-    (user?.username?.[0] ?? '?').toUpperCase();
-
   return (
     <div className="pt-safe pb-safe flex h-full flex-col">
       <Link to="/dashboard" className="flex h-16 items-center gap-2.5 px-5">
@@ -298,12 +295,11 @@ function Sidebar({ isAdmin, pendingAccounts }: { isAdmin: boolean; pendingAccoun
         <Link
           to="/profile"
           className="hover:bg-accent/60 flex items-center gap-3 rounded-md p-2 transition-colors">
-          <span
-            aria-hidden="true"
-            className="grid size-9 shrink-0 place-items-center rounded-full text-xs font-bold"
-            style={{ backgroundColor: `${primary.hex}1f`, color: primary.hex }}>
-            {initials}
-          </span>
+          <UserAvatar
+            user={user}
+            className="size-9 text-xs font-bold"
+            style={{ backgroundColor: `${primary.hex}1f`, color: primary.hex }}
+          />
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold leading-tight">{user?.fullName || user?.username}</span>
             <span className="text-muted-foreground block text-xs">{user ? ROLE_TITLE[user.role] : ''}</span>

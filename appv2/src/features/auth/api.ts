@@ -42,6 +42,14 @@ export function updateProfile(token: string, update: ProfileUpdate) {
   return request<User>('/auth/me', { method: 'PUT', token, body: update });
 }
 
+export function setAvatar(token: string, avatar: string) {
+  return request<User>('/auth/me/avatar', { method: 'PUT', token, body: { avatar } });
+}
+
+export function removeAvatar(token: string) {
+  return request<User>('/auth/me/avatar', { method: 'DELETE', token });
+}
+
 export function changePassword(token: string, currentPassword: string, newPassword: string) {
   return request<void>('/auth/password', {
     method: 'PUT',

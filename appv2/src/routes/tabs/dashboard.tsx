@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { TileRow } from '@/components/ui/tile-row';
+import { UserAvatar } from '@/components/user-avatar';
 import { useAuth } from '@/features/auth/context';
 import { greet } from '@/features/auth/greeting';
 import * as readings from '@/features/readings/api';
@@ -92,9 +93,6 @@ export default function DashboardScreen() {
 
   // Recomputed each heartbeat, so the greeting rolls over with the clock.
   const { greeting, subtitle } = greet(user);
-  const initials =
-    `${user?.firstName?.[0] ?? ''}${user?.lastName?.[0] ?? ''}`.toUpperCase() ||
-    (user?.username?.[0] ?? '?').toUpperCase();
 
   function renderSourceBadge() {
     if (!data) return null;
@@ -133,9 +131,8 @@ export default function DashboardScreen() {
         <Link
           to="/profile"
           aria-label="Profile"
-          className="grid size-10 shrink-0 place-items-center rounded-full text-sm font-bold transition-opacity hover:opacity-80"
-          style={{ backgroundColor: `${ac}1f`, color: ac }}>
-          {initials}
+          className="shrink-0 rounded-full transition-opacity hover:opacity-80">
+          <UserAvatar user={user} className="size-10 text-sm font-bold" style={{ backgroundColor: `${ac}1f`, color: ac }} />
         </Link>
       </header>
 

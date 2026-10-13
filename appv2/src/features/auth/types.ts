@@ -10,6 +10,8 @@ export type User = {
   middleName: string | null;
   lastName: string;
   fullName: string;
+  /** A data URL of the compressed photo, or null for initials. */
+  avatar: string | null;
 };
 
 export type LoginResponse = {

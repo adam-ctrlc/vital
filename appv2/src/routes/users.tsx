@@ -32,6 +32,7 @@ import { SearchField } from '@/components/ui/search-field';
 import { Segmented } from '@/components/ui/segmented';
 import { SettingsSection } from '@/components/ui/settings-list';
 import { Skeleton } from '@/components/ui/skeleton';
+import { UserAvatar } from '@/components/user-avatar';
 import { useAuth } from '@/features/auth/context';
 import type { Role } from '@/features/auth/types';
 import * as usersApi from '@/features/users/api';
@@ -85,11 +86,6 @@ const EMPTY: Draft = {
 };
 
 type Notice = { tone: CalloutTone; title: string; description?: string };
-
-function initials(row: ManagedUser): string {
-  const fromName = `${row.firstName.trim().charAt(0)}${row.lastName.trim().charAt(0)}`;
-  return (fromName || row.username.slice(0, 2)).toUpperCase();
-}
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -380,11 +376,10 @@ export default function UsersScreen() {
               {pending.map((row) => (
                 <div key={row.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
                   <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <span
-                      aria-hidden="true"
-                      className="grid size-10 shrink-0 place-items-center rounded-full bg-amber-500/15 text-sm font-bold text-amber-700 dark:text-amber-400">
-                      {initials(row)}
-                    </span>
+                    <UserAvatar
+                      user={row}
+                      className="size-10 bg-amber-500/15 text-sm font-bold text-amber-700 dark:text-amber-400"
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-semibold leading-tight">
                         {row.fullName || row.username}
@@ -435,17 +430,11 @@ export default function UsersScreen() {
                       type="button"
                       onClick={() => startEdit(row)}
                       className="hover:bg-accent/60 active:bg-accent flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors">
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          'grid size-10 shrink-0 place-items-center rounded-full text-sm font-bold',
-                          !isAdmin && 'bg-muted text-muted-foreground',
-                        )}
-                        style={
-                          isAdmin ? { backgroundColor: `${primary.hex}1f`, color: primary.hex } : undefined
-                        }>
-                        {initials(row)}
-                      </span>
+                      <UserAvatar
+                        user={row}
+                        className={cn('size-10 text-sm font-bold', !isAdmin && 'bg-muted text-muted-foreground')}
+                        style={isAdmin ? { backgroundColor: `${primary.hex}1f`, color: primary.hex } : undefined}
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
                           <span className="text-sm font-semibold leading-tight">

@@ -2,6 +2,7 @@ import {
   AtIcon,
   BellIcon,
   BellRingingIcon,
+  CameraIcon,
   CaretRightIcon,
   CheckIcon,
   EnvelopeIcon,
@@ -26,6 +27,7 @@ import { BottomSheet } from '@/components/bottom-sheet';
 import { ConfirmModal } from '@/components/confirm-modal';
 import { InfoModal } from '@/components/info-modal';
 import { EditProfileSheet, PasswordSheet } from '@/components/profile/account-sheets';
+import { AvatarSheet } from '@/components/profile/avatar-sheet';
 import { Button } from '@/components/ui/button';
 import { Callout, type CalloutTone } from '@/components/ui/callout';
 import { Card } from '@/components/ui/card';
@@ -33,6 +35,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { SettingsRow, SettingsSection } from '@/components/ui/settings-list';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
+import { UserAvatar } from '@/components/user-avatar';
 import { useAuth } from '@/features/auth/context';
 import type { Role } from '@/features/auth/types';
 import {
@@ -57,17 +60,6 @@ const ROLE_TITLE: Record<Role, string> = {
   admin: 'Maintenance Engineer',
   user: 'Power Utility Personnel',
 };
-
-/**
- * Initials from the name, falling back to the username so the avatar is never blank.
- * The username rather than the email, because an account may have no email at all.
- */
-function initials(first: string | undefined, last: string | undefined, username: string | undefined) {
-  const letters = `${first?.[0] ?? ''}${last?.[0] ?? ''}`.trim();
-  if (letters) return letters.toUpperCase();
-
-  return (username?.[0] ?? '?').toUpperCase();
-}
 
 type Notice = { tone: CalloutTone; title: string; description?: ReactNode };
 
@@ -152,7 +144,7 @@ export default function ProfileScreen() {
   } = useNotifications();
 
   const [sheet, setSheet] = useState<
-    'profile' | 'password' | 'style' | 'sound' | 'file' | 'length' | 'appearance' | 'help' | 'signOut' | null
+    'profile' | 'avatar' | 'password' | 'style' | 'sound' | 'file' | 'length' | 'appearance' | 'help' | 'signOut' | null
   >(null);
   const close = useCallback(() => setSheet(null), []);
 
@@ -303,12 +295,20 @@ export default function ProfileScreen() {
       <PageHeader icon={UserCircleIcon} iconColor={primary.hex} title="Profile" />
 
       <Card className="flex-row items-center gap-4 p-4">
-        <span
-          aria-hidden="true"
-          className="grid size-14 shrink-0 place-items-center rounded-full text-lg font-bold"
-          style={{ backgroundColor: `${primary.hex}1f`, color: primary.hex }}>
-          {initials(user?.firstName, user?.lastName, user?.username)}
-        </span>
+        <button
+          type="button"
+          aria-label="Change profile picture"
+          onClick={() => setSheet('avatar')}
+          className="relative shrink-0 cursor-pointer rounded-full">
+          <UserAvatar
+            user={user}
+            className="size-14 text-lg font-bold"
+            style={{ backgroundColor: `${primary.hex}1f`, color: primary.hex }}
+          />
+          <span className="bg-primary text-primary-foreground border-card absolute -bottom-0.5 -right-0.5 grid size-6 place-items-center rounded-full border-2">
+            <CameraIcon size={12} weight="bold" aria-hidden="true" />
+          </span>
+        </button>
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-bold leading-tight">{user?.fullName || user?.username || '--'}</h2>
           <p className="text-muted-foreground break-words text-xs">
@@ -478,6 +478,7 @@ export default function ProfileScreen() {
 
       <p className="text-muted-foreground text-center text-[10px]">VITAL, PHINMA Cagayan de Oro College</p>
 
+      <AvatarSheet visible={sheet === 'avatar'} onClose={close} />
       <EditProfileSheet
         visible={sheet === 'profile'}
         onClose={close}
