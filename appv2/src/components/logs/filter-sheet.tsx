@@ -3,8 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Button } from '@/components/ui/button';
+import { DateInput } from '@/components/ui/date-input';
 import { IconInput } from '@/components/ui/icon-input';
-import { Input } from '@/components/ui/input';
 import {
   NO_FILTERS,
   RANGE_LABEL,
@@ -138,11 +138,11 @@ export function FilterSheet({
             <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
               <label className="min-w-0 space-y-1">
                 <span className="text-muted-foreground block text-xs">From</span>
-                <Input type="date" value={draft.fromDate} onChange={(event) => set('fromDate', event.target.value)} />
+                <DateInput value={draft.fromDate} onChange={(event) => set('fromDate', event.target.value)} />
               </label>
               <label className="min-w-0 space-y-1">
                 <span className="text-muted-foreground block text-xs">To</span>
-                <Input type="date" value={draft.toDate} onChange={(event) => set('toDate', event.target.value)} />
+                <DateInput value={draft.toDate} onChange={(event) => set('toDate', event.target.value)} />
               </label>
             </div>
           ) : null}

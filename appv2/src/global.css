@@ -255,3 +255,17 @@
 .slider:enabled:active::-moz-range-thumb {
   transform: scale(1.15);
 }
+
+/* Date fields (components/ui/date-input.tsx): the native calendar button is stretched,
+   invisible, over the whole field, so a tap anywhere opens the device's picker while our
+   own icons show. */
+.date-input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}

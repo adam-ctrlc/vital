@@ -1,4 +1,4 @@
-import { MoonIcon, SunIcon } from '@phosphor-icons/react';
+import { CaretDownIcon, MoonIcon, SunIcon } from '@phosphor-icons/react';
 import { memo, useEffect, useState, type ReactNode } from 'react';
 
 import { BottomSheet } from '@/components/bottom-sheet';
@@ -122,18 +122,23 @@ function CustomColor({ value, selected, onChange }: { value: string; selected: b
   return (
     <div className="flex items-center gap-2">
       <span className="text-sm font-medium">Custom</span>
-      <input
-        type="color"
-        aria-label="Pick a custom colour"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+      {/* The native colour input sits invisibly on top, so a tap opens the device's chooser
+          while the swatch and chevron are ours. */}
+      <label
         className={cn(
-          'ml-auto h-9 w-12 shrink-0 cursor-pointer rounded-md border bg-transparent p-0.5',
-          '[&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[4px] [&::-webkit-color-swatch]:border-0',
-          '[&::-moz-color-swatch]:rounded-[4px] [&::-moz-color-swatch]:border-0',
+          'border-input bg-background dark:bg-input/30 relative ml-auto flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-md border pl-1.5 pr-2.5 shadow-sm shadow-black/5 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50',
           selected && 'ring-primary ring-2 ring-offset-1 ring-offset-background'
-        )}
-      />
+        )}>
+        <span className="size-6 rounded-[5px] border border-black/10" style={{ backgroundColor: value }} />
+        <CaretDownIcon size={12} weight="bold" className="text-muted-foreground" aria-hidden="true" />
+        <input
+          type="color"
+          aria-label="Pick a custom colour"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="absolute inset-0 size-full cursor-pointer opacity-0"
+        />
+      </label>
       <label className="border-input bg-background dark:bg-input/30 flex h-9 w-28 items-center gap-1 rounded-md border px-3 shadow-sm shadow-black/5 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
         <span className="text-muted-foreground text-sm">#</span>
         <input

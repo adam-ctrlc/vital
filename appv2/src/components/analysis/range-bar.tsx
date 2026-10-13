@@ -1,4 +1,4 @@
-import { Input } from '@/components/ui/input';
+import { DateInput } from '@/components/ui/date-input';
 import { Segmented } from '@/components/ui/segmented';
 import { RANGE_LABEL, type AnalysisRange, type RangeChoice } from '@/features/insights/range';
 import type { InsightSource } from '@/features/insights/types';
@@ -46,11 +46,11 @@ export function RangeBar({ value, onChange }: { value: AnalysisRange; onChange: 
         <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
           <label className="space-y-1">
             <span className="text-muted-foreground block text-xs">From</span>
-            <Input type="date" value={value.fromDate} onChange={(event) => set({ fromDate: event.target.value })} />
+            <DateInput value={value.fromDate} onChange={(event) => set({ fromDate: event.target.value })} />
           </label>
           <label className="space-y-1">
             <span className="text-muted-foreground block text-xs">To</span>
-            <Input type="date" value={value.toDate} onChange={(event) => set({ toDate: event.target.value })} />
+            <DateInput value={value.toDate} onChange={(event) => set({ toDate: event.target.value })} />
           </label>
         </div>
       ) : null}
